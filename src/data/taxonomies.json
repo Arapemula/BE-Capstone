@@ -1,0 +1,46 @@
+{
+  "technology": {
+    "JavaScript": ["javascript", "js", "ecmascript"],
+    "React": ["react", "next", "vite"],
+    "Express": ["express", "node", "nodejs", "node.js"],
+    "REST API": ["rest", "restful", "api", "endpoint", "http"],
+    "PostgreSQL": ["postgres", "postgresql", "sql", "database", "relational"],
+    "Deployment": ["deployment", "deploy", "vercel", "netlify", "render", "hosting"],
+    "Testing": ["testing", "test", "debugging", "qa"],
+    "Python": ["python", "pandas", "numpy"],
+    "TensorFlow": ["tensorflow", "keras", "deep learning"],
+    "NLP": ["nlp", "natural language", "text classification", "skill extraction"],
+    "TensorBoard": ["tensorboard", "training metrics"],
+    "Model Evaluation": ["accuracy", "mae", "evaluation", "validation"],
+    "Model Serving": ["flask", "fastapi", "inference", "model api"],
+    "Data Wrangling": ["wrangling", "cleaning", "preprocessing", "gathering data"],
+    "EDA": ["eda", "exploratory", "visualization", "analysis"],
+    "Feature Engineering": ["feature engineering", "feature extraction"],
+    "A/B Testing": ["a/b testing", "ab testing", "experiment"],
+    "Streamlit": ["streamlit", "dashboard"],
+    "Time Management": ["time management", "manajemen waktu", "atur waktu", "deadline", "prioritas"],
+    "Leadership": ["leadership", "kepemimpinan", "lead", "koordinasi", "memimpin"],
+    "Communication": ["communication", "komunikasi", "presentasi", "notulen", "stakeholder"],
+    "Project Planning": ["project planning", "perencanaan proyek", "timeline", "milestone", "sprint"],
+    "Problem Solving": ["problem solving", "pemecahan masalah", "problem", "solusi"],
+    "Risk Management": ["risk management", "manajemen risiko", "risiko", "mitigasi"]
+  },
+  "design": {
+    "UX": ["ux", "user experience", "user research"],
+    "UI": ["ui", "interface design", "figma", "sketch"],
+    "Graphic Design": ["illustrator", "photoshop", "branding"]
+  },
+  "marketing": {
+    "SEO": ["seo", "search engine optimization"],
+    "Content": ["content", "copywriting", "blogging"],
+    "Growth": ["growth", "ppc", "ads", "campaign"]
+  },
+  "finance": {
+    "Accounting": ["accounting", "bookkeeping", "audit"],
+    "Financial Analysis": ["financial analysis", "modeling", "excel"]
+  },
+  "healthcare": {
+    "Clinical": ["clinical", "patient care", "nursing"],
+    "Health Informatics": ["informatics", "ehr", "health data"]
+  }
+}

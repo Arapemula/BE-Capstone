@@ -1,0 +1,69 @@
+{
+  "technology": [
+    {
+      "id": "tq1",
+      "prompt": "Seberapa nyaman kamu membangun fitur web interaktif dengan JavaScript?",
+      "options": ["Belum pernah", "Paham dasar", "Sering praktik", "Mampu memimpin implementasi"]
+    },
+    {
+      "id": "tq2",
+      "prompt": "Seberapa siap kamu membuat REST API dengan validasi dan penanganan error?",
+      "options": ["Belum siap", "Masih belajar", "Cukup siap", "Sangat siap"]
+    },
+    {
+      "id": "tq3",
+      "prompt": "Bagaimana pengalamanmu menggunakan database relasional?",
+      "options": ["Belum pernah", "Query dasar", "Desain tabel sederhana", "Optimasi dan relasi kompleks"]
+    },
+    {
+      "id": "tq4",
+      "prompt": "Pernahkah kamu deploy aplikasi web dan mengatur environment variable produksi?",
+      "options": ["Belum pernah", "Percobaan sekali", "Beberapa kali", "Sudah terbiasa"]
+    }
+  ],
+  "business": [
+    {
+      "id": "bq1",
+      "prompt": "Apakah kamu pandai mengatur waktu dan membagi prioritas?",
+      "options": ["NO", "YES"]
+    },
+    {
+      "id": "bq2",
+      "prompt": "Apakah kamu nyaman mengoordinasikan tugas tim?",
+      "options": ["NO", "YES"]
+    }
+  ],
+  "design": [
+    {
+      "id": "dq1",
+      "prompt": "Seberapa sering kamu membuat prototype di Figma atau alat sejenis?",
+      "options": ["Tidak pernah", "Kadang-kadang", "Sering", "Setiap proyek"]
+    },
+    {
+      "id": "dq2",
+      "prompt": "Apakah kamu melakukan user research sebelum mendesain?",
+      "options": ["Tidak", "Kadang", "Selalu jika memungkinkan", "Selalu"]
+    }
+  ],
+  "marketing": [
+    {
+      "id": "mq1",
+      "prompt": "Seberapa paham kamu tentang dasar SEO on-page?",
+      "options": ["Tidak paham", "Paham dasar", "Mengerti praktik terbaik", "Mampu memimpin strategi"]
+    }
+  ],
+  "finance": [
+    {
+      "id": "fq1",
+      "prompt": "Apakah kamu terbiasa membuat laporan keuangan bulanan?",
+      "options": ["Tidak", "Kadang", "Sering", "Selalu"]
+    }
+  ],
+  "healthcare": [
+    {
+      "id": "hq1",
+      "prompt": "Apakah kamu memiliki pengalaman langsung dengan catatan medis elektronik (EHR)?",
+      "options": ["Tidak", "Sedikit", "Beberapa kali", "Sering"]
+    }
+  ]
+}
