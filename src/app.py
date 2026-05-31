@@ -14,17 +14,22 @@ from src.services.analysis import (
     create_personalized_recommendation,
     extract_pdf_text,
     extract_text_from_upload,
+    generate_career_fit_quiz,
     get_dashboard_snapshot,
     get_quiz_questions,
     get_role_profiles,
     score_quiz
 )
 from src.services.ai_client import (
+    create_final_career_conclusion,
+    enrich_career_fit_quiz_with_openrouter,
     enrich_cv_analysis_with_ai,
     enrich_recommendation_with_ai,
     is_ai_service_enabled
 )
 from src.repositories.store import (
+    get_user_cv_history,
+    get_user_profile,
     is_database_enabled,
     save_cv_analysis,
     save_lead,
@@ -32,8 +37,10 @@ from src.repositories.store import (
     get_latest_activity
 )
 from src.db import init_database
+from src.auth import get_current_user_context
 
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024
 port = int(os.getenv("PORT", 3001))
 
 def get_cors_origin():
@@ -66,11 +73,35 @@ def health():
 def roles():
     return jsonify({"roles": get_role_profiles()})
 
+@app.route('/api/profile', methods=['GET'])
+def profile():
+    user_context = get_current_user_context()
+    if not user_context:
+        return jsonify({"error": "Sign in is required to access profile data."}), 401
+
+    profile_data = get_user_profile(user_context)
+    if profile_data is None:
+        return jsonify({"error": "Profile data is unavailable."}), 500
+
+    return jsonify(profile_data)
+
+@app.route('/api/profile/cv-analyses', methods=['GET'])
+def profile_cv_analyses():
+    user_context = get_current_user_context()
+    if not user_context:
+        return jsonify({"error": "Sign in is required to access CV scan history."}), 401
+
+    return jsonify({"history": get_user_cv_history(user_context)})
+
+@app.route('/api/cvs', methods=['POST'])
 @app.route('/api/cv/upload', methods=['POST'])
 def cv_upload():
     try:
         domain = request.form.get("domain") or request.args.get("domain") or "technology"
         target_role = request.form.get("targetRole") or request.args.get("targetRole") or "fullstack-web-developer"
+        target_job = request.form.get("targetJob")
+        if target_job is None:
+            target_job = request.args.get("targetJob")
         
         file = request.files.get("cv")
         if file and not is_pdf_upload(file):
@@ -83,7 +114,6 @@ def cv_upload():
                 "mimetype": file.mimetype,
                 "buffer": file.read()
             }
-            
         file_name = file.filename if file else "profile-text"
         file_size = len(file_obj["buffer"]) if file_obj else 0
         form_body = request.form.to_dict()
@@ -91,16 +121,16 @@ def cv_upload():
         body_text = str(form_body.get("text", "")).strip()
         extracted_text = "\n\n".join([body_text, extracted_pdf_text]).strip() if extracted_pdf_text else extract_text_from_upload(None, form_body)
         fallback_analysis = analyze_cv_text(extracted_text, {"domain": domain, "targetRole": target_role})
-        analysis = enrich_cv_analysis_with_ai(
-            extracted_text,
-            fallback_analysis,
-            {"domain": domain, "targetRole": target_role}
-        )
+        analysis_options = {"domain": domain, "targetRole": target_role}
+        if target_job is not None:
+            analysis_options["targetJob"] = target_job
+        analysis = enrich_cv_analysis_with_ai(extracted_text, fallback_analysis, analysis_options)
 
         save_cv_analysis(
             file_name=file_name,
             file_size=file_size,
-            analysis=analysis
+            analysis=analysis,
+            user_context=get_current_user_context()
         )
 
         return jsonify({
@@ -118,6 +148,7 @@ def cv_upload():
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/quiz-questions', methods=['GET'])
 @app.route('/api/quiz/questions', methods=['GET'])
 def quiz_questions():
     domain = request.args.get("domain", "technology")
@@ -127,6 +158,19 @@ def quiz_questions():
         "questions": get_quiz_questions(domain, target_role)
     })
 
+@app.route('/api/career-fit-quizzes', methods=['POST'])
+@app.route('/api/quiz/career-fit', methods=['POST'])
+def career_fit_quiz():
+    try:
+        payload = request.json or {}
+        fallback_quiz = generate_career_fit_quiz(payload)
+        quiz = enrich_career_fit_quiz_with_openrouter(payload, fallback_quiz)
+        return jsonify({"question": quiz}), 201
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/quiz-attempts', methods=['POST'])
 @app.route('/api/quiz/submit', methods=['POST'])
 def quiz_submit():
     try:
@@ -139,7 +183,18 @@ def quiz_submit():
             "targetRole": target_role
         })
 
-        save_quiz_result(score=result["score"], result=result)
+        save_quiz_result(score=result["score"], result=result, user_context=get_current_user_context())
+        return jsonify(result), 201
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/career-results', methods=['POST'])
+@app.route('/api/quiz/final-result', methods=['POST'])
+def quiz_final_result():
+    try:
+        payload = request.json or {}
+        result = create_final_career_conclusion(payload)
         return jsonify(result), 201
     except Exception as e:
         traceback.print_exc()
@@ -156,6 +211,7 @@ def recommendations():
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/dashboard-snapshots/overview', methods=['GET'])
 @app.route('/api/dashboard/overview', methods=['GET'])
 def dashboard_overview():
     try:
@@ -166,6 +222,7 @@ def dashboard_overview():
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/users/<user_id>/dashboard-snapshot', methods=['GET'])
 @app.route('/api/dashboard/<user_id>', methods=['GET'])
 def dashboard_user(user_id):
     try:
@@ -200,6 +257,7 @@ def leads():
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/project-requirements', methods=['GET'])
 @app.route('/api/project/requirements', methods=['GET'])
 def project_requirements():
     return jsonify({
@@ -208,18 +266,18 @@ def project_requirements():
             "JobStreet-style biodata capture before CV scanning",
             "PDF-only CV upload with text extraction for AI scanning",
             "AI job matching with percentage scores",
-            "YES/NO mini quiz branching",
+            "Career-fit mini quiz based on top job matches",
             "Skill gap mapping against target role",
             "Career recommendation or e-course learning option",
             "Result dashboard with persisted activity"
         ],
         "technicalCoverage": {
-            "frontend": ["React", "Vite", "Axios networking calls", "responsive mockup and layout"],
+            "frontend": ["React", "Vite", "Axios networking calls", "responsive workflow UI"],
             "backend": ["Flask REST API", "RESTful URL convention", "PostgreSQL persistence with memory fallback"],
             "aiMl": [
                 "TensorFlow-ready model service contract",
                 "skill extraction and recommendation contract",
-                "external AI service" if is_ai_service_enabled() else "local fallback AI service"
+                "external AI service" if is_ai_service_enabled() else "local deterministic analysis service"
             ],
             "dataScience": ["dataset/EDA/dashboard integration contract", "business-question driven insights"]
         }

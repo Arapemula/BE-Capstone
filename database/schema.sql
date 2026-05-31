@@ -2,6 +2,8 @@ CREATE TABLE users (
   id SERIAL PRIMARY KEY,
   name VARCHAR(120) NOT NULL,
   email VARCHAR(255) NOT NULL UNIQUE,
+  external_id VARCHAR(80) UNIQUE,
+  auth_provider VARCHAR(40) NOT NULL DEFAULT 'local',
   created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
@@ -10,6 +12,7 @@ CREATE TABLE cvs (
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   file_url TEXT NOT NULL,
   file_name VARCHAR(255) NOT NULL,
+  analysis JSONB,
   created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 

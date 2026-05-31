@@ -262,23 +262,23 @@ def load_json(filename, fallback):
 
 taxonomies = load_json("taxonomies.json", DEFAULT_TAXONOMIES)
 quiz_bank = load_json("quizBank.json", DEFAULT_QUIZ_BANK)
-dashboard_snapshot_data = load_json("dashboardSnapshot.json", {
-    "user": {"name": "Demo User", "role": "SkillMap Explorer"},
-    "skillScore": 76,
-    "targetRole": "Junior Full-Stack Web Developer",
-    "strengths": ["JavaScript", "React"],
-    "gaps": ["Express", "PostgreSQL", "Deployment"],
-    "roadmap": []
-})
 
 def normalize_text(value=""):
     return str(value).lower() if value else ""
 
 def get_role_profile(target_role="fullstack-web-developer"):
+    role = find_role_profile(target_role)
+    return role or ROLE_PROFILES[0]
+
+def find_role_profile(target_role="fullstack-web-developer"):
     for role in ROLE_PROFILES:
         if role["id"] == target_role:
             return role
-    return ROLE_PROFILES[0]
+    return None
+
+def format_role_label(value=""):
+    text = str(value or "").strip().replace("-", " ")
+    return " ".join(part.upper() if part.lower() in {"ai", "api", "it", "ml", "qa", "sql", "ui", "ux"} else part.capitalize() for part in text.split())
 
 def get_domain_taxonomy(domain="technology"):
     base = taxonomies.get(domain) or taxonomies.get("technology") or DEFAULT_TAXONOMIES["technology"]
@@ -370,7 +370,13 @@ def calculate_readiness_score(extracted_skills, required_skills, quiz_score=None
     if isinstance(quiz_score, (int, float)):
         return round(cv_score * 0.6 + quiz_score * 0.4)
 
-    return max(35, min(95, cv_score))
+    return max(0, min(100, cv_score))
+
+def has_actionable_match(match):
+    return (
+        clamp_number(match.get("matchScore"), 0, 100) > 0
+        or bool(compact_skill_items(match.get("matchedSkills"), 1))
+    )
 
 def readiness_label(score):
     if score >= 85:
@@ -422,12 +428,7 @@ def extract_text_from_upload(file_obj=None, body=None):
     if body_text:
         return body_text
 
-    return " ".join([
-        (file_obj.get("originalname") if file_obj else "uploaded-cv"),
-        body.get("targetRole", ""),
-        body.get("domain", "technology"),
-        "portfolio project communication problem solving"
-    ])
+    raise ValueError("CV PDF atau teks profil wajib dikirim sebelum analisis dijalankan.")
 
 def analyze_cv_text(input_text="", options=None):
     if options is None:
@@ -464,8 +465,8 @@ def analyze_cv_text(input_text="", options=None):
     confidence = max(0.45, min(0.94, 0.48 + (len(extracted_skills) / max(len(best_role_profile.get("requiredSkills", [])), 1)) * 0.42))
 
     return {
-        "extractedSkills": extracted_skills if extracted_skills else ["Communication", "Problem Solving"],
-        "jobMatches": job_matches,
+        "extractedSkills": extracted_skills,
+        "jobMatches": [match for match in job_matches if has_actionable_match(match)],
         "suggestedRoleId": best_match["id"],
         "skillGap": skill_gap,
         "recommendation": build_recommendation_texts(roadmap, best_role_profile),
@@ -493,6 +494,333 @@ def get_quiz_questions(domain="technology", target_role="fullstack-web-developer
     }
 
     return (base_questions + [role_question])[:5]
+
+def normalize_job_matches_for_quiz(job_matches=None):
+    source_matches = job_matches if isinstance(job_matches, list) else []
+    normalized_matches = []
+    seen_role_ids = set()
+
+    for match in source_matches:
+        if not isinstance(match, dict):
+            continue
+
+        role_id = match.get("id") or match.get("roleId")
+        if not role_id or role_id in seen_role_ids:
+            continue
+
+        role_profile = find_role_profile(role_id)
+        normalized_role_id = role_profile["id"] if role_profile else role_id
+        matched_skills = compact_skill_items(match.get("matchedSkills") or match.get("matched_skills"), 20)
+        missing_skills = compact_skill_items(
+            match.get("missingSkills")
+            or match.get("missing_skills")
+            or match.get("skillGap")
+            or match.get("skill_gap"),
+            20,
+        )
+        required_skills = compact_skill_items(
+            match.get("requiredSkills")
+            or match.get("required_skills")
+            or (role_profile.get("requiredSkills", []) if role_profile else []),
+            20,
+        )
+        normalized_matches.append({
+            **match,
+            "id": normalized_role_id,
+            "name": match.get("name") or (role_profile["name"] if role_profile else format_role_label(role_id)),
+            "domain": match.get("domain") or (role_profile.get("domain") if role_profile else None),
+            "matchScore": clamp_number(match.get("matchScore"), 0, 100),
+            "matchedSkills": matched_skills,
+            "missingSkills": missing_skills,
+            "requiredSkills": required_skills,
+            "businessGoal": match.get("businessGoal") or (role_profile.get("businessGoal") if role_profile else None),
+            "marketSignals": compact_skill_items(
+                match.get("marketSignals")
+                or match.get("market_signals")
+                or (role_profile.get("marketSignals", []) if role_profile else []),
+                20,
+            ),
+        })
+        seen_role_ids.add(normalized_role_id)
+
+    normalized_matches.sort(key=lambda item: item.get("matchScore", 0), reverse=True)
+    return [match for match in normalized_matches if has_actionable_match(match)]
+
+def clamp_number(value, min_value=0, max_value=100):
+    try:
+        number = round(float(value))
+    except (TypeError, ValueError):
+        number = min_value
+
+    return max(min_value, min(max_value, number))
+
+def get_missing_skills_for_match(match):
+    explicit_missing = compact_skill_items(
+        match.get("missingSkills")
+        or match.get("missing_skills")
+        or match.get("skillGap")
+        or match.get("skill_gap"),
+        20,
+    )
+    if explicit_missing:
+        return explicit_missing
+
+    required_skills = compact_skill_items(match.get("requiredSkills"), 20)
+    matched_skills = compact_skill_items(match.get("matchedSkills"), 20)
+    matched_lookup = {str(skill).lower() for skill in matched_skills}
+
+    return [
+        skill
+        for skill in required_skills
+        if str(skill).lower() not in matched_lookup
+    ]
+
+def compact_skill_items(value, limit=3):
+    if not isinstance(value, list):
+        return []
+
+    return [
+        str(item).strip()
+        for item in value
+        if str(item).strip()
+    ][:limit]
+
+def join_natural(items, fallback):
+    clean_items = compact_skill_items(items, 3)
+    if not clean_items:
+        return fallback
+    if len(clean_items) == 1:
+        return clean_items[0]
+    return ", ".join(clean_items[:-1]) + f", dan {clean_items[-1]}"
+
+def text_has_any(text, keywords):
+    padded_text = f" {text} "
+    for keyword in keywords:
+        if len(keyword) <= 2:
+            if f" {keyword} " in padded_text:
+                return True
+            continue
+        if keyword in text:
+            return True
+    return False
+
+def get_role_work_context(match, signal):
+    searchable_text = " ".join([
+        str(match.get("id") or ""),
+        str(match.get("name") or ""),
+        " ".join(compact_skill_items(match.get("matchedSkills"), 20)),
+        " ".join(compact_skill_items(match.get("requiredSkills"), 20)),
+        " ".join(compact_skill_items(get_missing_skills_for_match(match), 20)),
+        " ".join(compact_skill_items(match.get("marketSignals"), 20)),
+    ]).lower()
+
+    if text_has_any(searchable_text, ["secretary", "administrative", "administrator", "office", "assistant", "confidentiality", "attention to detail"]):
+        return {
+            "workContext": "agenda, dokumen, dan komunikasi kantor",
+            "proofArtifact": "log agenda, notulen, dan arsip dokumen",
+            "routineWork": "mengelola jadwal, email, dan dokumen penting",
+            "teamContribution": "menjaga follow-up rapat dan informasi sensitif",
+        }
+
+    if text_has_any(searchable_text, ["project", "manager", "coordinator", "leadership", "timeline", "risk management"]):
+        return {
+            "workContext": "prioritas, timeline, dan koordinasi tim",
+            "proofArtifact": "timeline proyek, risk log, dan catatan keputusan",
+            "routineWork": "memantau progres, blocker, dan pembagian tugas",
+            "teamContribution": "menyelaraskan update tim dan risiko proyek",
+        }
+
+    if text_has_any(searchable_text, ["data", "scientist", "analyst", "eda", "wrangling", "dashboard"]):
+        return {
+            "workContext": "dataset, insight, dan laporan analisis",
+            "proofArtifact": "notebook analisis, visualisasi, dan ringkasan insight",
+            "routineWork": "membersihkan data dan mengecek pola utama",
+            "teamContribution": "menerjemahkan data menjadi keputusan yang mudah dibaca",
+        }
+
+    if text_has_any(searchable_text, ["ai-engineer", "ai engineer", "machine learning", "tensorflow", "nlp", "model evaluation", "model serving"]):
+        return {
+            "workContext": "dataset, eksperimen model, dan evaluasi",
+            "proofArtifact": "laporan eksperimen, metrik model, dan demo inference",
+            "routineWork": "menguji data, model, dan hasil prediksi",
+            "teamContribution": "menjelaskan performa model dan batasannya",
+        }
+
+    if text_has_any(searchable_text, ["web", "developer", "react", "api", "frontend", "backend", "javascript"]):
+        return {
+            "workContext": "fitur web, API, dan perbaikan bug",
+            "proofArtifact": "fitur end-to-end dengan dokumentasi singkat",
+            "routineWork": "membangun UI, menghubungkan API, dan mengetes alur",
+            "teamContribution": "mengirim update teknis dan hasil testing",
+        }
+
+    return {
+        "workContext": f"aktivitas yang mengasah {signal['primarySkill']}",
+        "proofArtifact": f"contoh kerja seputar {signal['primarySkill']}",
+        "routineWork": f"latihan rutin pada {signal['marketSignal']}",
+        "teamContribution": f"kontribusi yang memperkuat {signal['primarySkill']}",
+    }
+
+def get_match_signal(match):
+    matched_skills = compact_skill_items(match.get("matchedSkills"), 3)
+    missing_skills = compact_skill_items(get_missing_skills_for_match(match), 3)
+    market_signals = compact_skill_items(match.get("marketSignals"), 3)
+    required_skills = compact_skill_items(match.get("requiredSkills"), 3)
+
+    primary_skill = (matched_skills or required_skills or ["skill utama"])[0]
+    priority_gap = (missing_skills or required_skills or [primary_skill])[0]
+    if str(priority_gap).lower() == str(primary_skill).lower() and len(missing_skills) > 1:
+        priority_gap = missing_skills[1]
+    market_signal = (market_signals or [primary_skill])[0]
+
+    signal = {
+        "primarySkill": primary_skill,
+        "priorityGap": priority_gap,
+        "marketSignal": market_signal,
+        "matchedText": join_natural(matched_skills, primary_skill),
+        "gapText": join_natural(missing_skills, priority_gap),
+        "marketText": join_natural(market_signals, market_signal),
+    }
+
+    return {
+        **signal,
+        **get_role_work_context(match, signal),
+    }
+
+def build_career_fit_response(match, question_index=0, option_index=0):
+    signal = get_match_signal(match)
+    response_variants = [
+        [
+            f"Menyusun {signal['proofArtifact']} yang membuktikan {signal['primarySkill']}.",
+            f"Membuat contoh kerja kecil untuk memperbaiki {signal['priorityGap']}.",
+            f"Menyiapkan bukti praktik seputar {signal['workContext']}.",
+            f"Merapikan hasil latihan {signal['primarySkill']} agar siap ditunjukkan.",
+        ],
+        [
+            f"Menjaga ritme harian lewat {signal['routineWork']}.",
+            f"Mengurus pekerjaan rutin seputar {signal['workContext']}.",
+            f"Mencatat progres harian untuk {signal['marketSignal']}.",
+            f"Memilih tugas operasional yang mengasah {signal['primarySkill']}.",
+        ],
+        [
+            f"Melatih {signal['priorityGap']} lewat target mingguan yang jelas.",
+            f"Mengulang praktik {signal['priorityGap']} sampai hasilnya konsisten.",
+            f"Mencari mentor atau feedback khusus untuk {signal['priorityGap']}.",
+            f"Membuat latihan kecil yang menutup gap {signal['priorityGap']}.",
+        ],
+        [
+            f"Menampilkan {signal['proofArtifact']} sebagai bukti portofolio.",
+            f"Membuat studi kasus dari pekerjaan seputar {signal['workContext']}.",
+            f"Mengemas hasil praktik {signal['primarySkill']} menjadi cerita portofolio.",
+            f"Menulis ringkasan masalah, aksi, dan hasil dari {signal['marketSignal']}.",
+        ],
+        [
+            f"Mengambil peran untuk {signal['teamContribution']}.",
+            f"Membantu tim dengan kontribusi seputar {signal['workContext']}.",
+            f"Menjadi penghubung saat pekerjaan butuh {signal['primarySkill']}.",
+            f"Menjaga kualitas kerja tim pada area {signal['marketSignal']}.",
+        ],
+    ]
+    variants_for_question = response_variants[question_index % len(response_variants)]
+    return variants_for_question[option_index % len(variants_for_question)]
+
+def build_career_fit_prompt(job_matches, question_index=0):
+    top_match = job_matches[0] if job_matches else {}
+    signal = get_match_signal(top_match)
+    role_names = [
+        match.get("name")
+        for match in job_matches[:3]
+        if isinstance(match, dict) and match.get("name")
+    ]
+    role_text = join_natural(role_names, "saran pekerjaan")
+    prompt_variants = [
+        f"Dari scan CV, arah yang muncul adalah {role_text}. Bukti kerja mana yang ingin kamu mulai dulu?",
+        f"Kalau aktivitas hariannya dekat dengan {signal['workContext']}, pola kerja mana yang paling kamu pilih?",
+        f"Gap utama seperti {signal['gapText']} masih perlu dikejar. Latihan mana yang terasa paling realistis?",
+        f"Untuk portofolio awal, bukti yang menunjukkan {signal['primarySkill']} seperti apa yang ingin kamu tampilkan?",
+        f"Dalam kerja tim, kontribusi seputar {signal['marketText']} mana yang terasa paling natural?"
+    ]
+    return prompt_variants[question_index % len(prompt_variants)]
+
+def build_career_fit_option(match, index=0, question_index=0):
+    role_id = match.get("id")
+    role_profile = find_role_profile(role_id)
+    normalized_role_id = role_profile["id"] if role_profile else role_id
+    role_name = match.get("name") or (role_profile["name"] if role_profile else format_role_label(role_id))
+    matched_skills = match.get("matchedSkills", []) if isinstance(match.get("matchedSkills"), list) else []
+    missing_skills = get_missing_skills_for_match(match)
+    match_score = clamp_number(match.get("matchScore"), 0, 100)
+    response = build_career_fit_response(match, question_index, index)
+    description_parts = [f"{match_score}% match dari hasil scan CV"]
+    if matched_skills:
+        description_parts.append(f"skill cocok: {', '.join(matched_skills[:2])}")
+    if missing_skills:
+        description_parts.append(f"gap utama: {', '.join(missing_skills[:2])}")
+
+    return {
+        "id": f"career-fit-q{question_index + 1}-{index + 1}-{normalized_role_id}",
+        "roleId": normalized_role_id,
+        "label": role_name,
+        "response": response,
+        "description": "; ".join(description_parts),
+        "matchScore": match_score,
+    }
+
+def build_career_fit_question(job_matches, question_index=0, prompt=None):
+    options = [
+        build_career_fit_option(match, index, question_index)
+        for index, match in enumerate(job_matches)
+    ]
+
+    return {
+        "id": f"career-fit-question-{question_index + 1}",
+        "prompt": prompt or build_career_fit_prompt(job_matches, question_index),
+        "options": options,
+    }
+
+def generate_career_fit_quiz(payload=None):
+    if payload is None:
+        payload = {}
+
+    job_matches = normalize_job_matches_for_quiz(payload.get("jobMatches"))
+    if not job_matches:
+        return {
+            "id": "career-fit-disambiguation",
+            "source": "local_rules",
+            "prompt": "",
+            "context": "Mini quiz belum tersedia karena belum ada saran pekerjaan dengan sinyal kecocokan.",
+            "options": [],
+            "questions": [],
+            "roles": [],
+        }
+
+    questions = [
+        build_career_fit_question(job_matches, index)
+        for index in range(5)
+    ]
+    first_question = questions[0]
+
+    return {
+        "id": "career-fit-disambiguation",
+        "source": "local_rules",
+        "prompt": first_question["prompt"],
+        "context": "Pertanyaan ini dibuat dari semua rekomendasi karier hasil scan CV.",
+        "options": first_question["options"],
+        "questions": questions,
+        "roles": [
+            {
+                "id": match.get("id"),
+                "name": match.get("name"),
+                "matchScore": clamp_number(match.get("matchScore"), 0, 100),
+                "matchedSkills": match.get("matchedSkills", []),
+                "requiredSkills": match.get("requiredSkills", []),
+                "missingSkills": get_missing_skills_for_match(match),
+                "businessGoal": match.get("businessGoal"),
+                "marketSignals": match.get("marketSignals", []),
+            }
+            for match in job_matches
+        ],
+    }
 
 def score_quiz(answers=None, options=None):
     if answers is None:
@@ -569,8 +897,13 @@ def create_personalized_recommendation(payload=None):
     }
 
 def get_dashboard_snapshot():
-    snapshot = dict(dashboard_snapshot_data)
-    snapshot.update({
+    return {
+        "user": None,
+        "skillScore": None,
+        "targetRole": None,
+        "strengths": [],
+        "gaps": [],
+        "roadmap": [],
         "featureModules": [
             "CV skill extraction",
             "Adaptive quiz",
@@ -585,8 +918,7 @@ def get_dashboard_snapshot():
         "compliance": {
             "frontend": ["React", "Vite module bundler", "Axios networking calls", "responsive UI"],
             "backend": ["Flask REST API", "RESTful URL convention", "PostgreSQL-ready persistence"],
-            "aiMl": ["CV NLP extraction placeholder", "model-service integration contract", "recommendation engine"],
+            "aiMl": ["CV NLP extraction contract", "model-service integration contract", "recommendation engine"],
             "dataScience": ["skill mapping dataset", "EDA/dashboard insight contract", "ready for Streamlit reporting"]
         }
-    })
-    return snapshot
+    }
