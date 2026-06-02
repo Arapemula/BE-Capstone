@@ -1,5 +1,6 @@
 import json
 import os
+import random
 from io import BytesIO
 
 try:
@@ -766,7 +767,17 @@ def build_career_fit_option(match, index=0, question_index=0):
         "matchScore": match_score,
     }
 
-def build_career_fit_question(job_matches, question_index=0, prompt=None):
+def shuffle_career_fit_options(options, question_index=0, base_offset=0):
+    if len(options) <= 1:
+        return list(options)
+
+    offset = (base_offset + question_index) % len(options)
+    return [
+        *options[offset:],
+        *options[:offset],
+    ]
+
+def build_career_fit_question(job_matches, question_index=0, prompt=None, base_offset=0):
     options = [
         build_career_fit_option(match, index, question_index)
         for index, match in enumerate(job_matches)
@@ -775,7 +786,7 @@ def build_career_fit_question(job_matches, question_index=0, prompt=None):
     return {
         "id": f"career-fit-question-{question_index + 1}",
         "prompt": prompt or build_career_fit_prompt(job_matches, question_index),
-        "options": options,
+        "options": shuffle_career_fit_options(options, question_index, base_offset),
     }
 
 def generate_career_fit_quiz(payload=None):
@@ -794,8 +805,9 @@ def generate_career_fit_quiz(payload=None):
             "roles": [],
         }
 
+    base_offset = random.SystemRandom().randrange(len(job_matches)) if len(job_matches) > 1 else 0
     questions = [
-        build_career_fit_question(job_matches, index)
+        build_career_fit_question(job_matches, index, base_offset=base_offset)
         for index in range(5)
     ]
     first_question = questions[0]

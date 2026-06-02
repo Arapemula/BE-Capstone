@@ -587,6 +587,34 @@ def has_actionable_match(match):
     )
 
 
+def build_skill_match_summary(recommended_career, match_score, skill_gap):
+    career_label = format_career_name(recommended_career)
+    score = clamp_score(match_score, 0)
+    if score >= 80:
+        level = "sangat kuat"
+    elif score >= 60:
+        level = "cukup kuat"
+    elif score >= 40:
+        level = "mulai terlihat"
+    elif score > 0:
+        level = "masih rendah"
+    else:
+        level = "belum terlihat dari skill yang terdeteksi"
+
+    summary = f"Kecocokan keterampilan untuk posisi {career_label} adalah {score:.0f}% ({level})."
+    if skill_gap:
+        gap_names = ", ".join(skill_gap[:3])
+        remaining = len(skill_gap) - 3
+        if remaining > 0:
+            summary += f" Skill yang perlu ditingkatkan antara lain: {gap_names}, dan {remaining} skill lainnya."
+        else:
+            summary += f" Skill yang perlu ditingkatkan: {gap_names}."
+    else:
+        summary += " Semua skill utama yang dibutuhkan sudah terdeteksi."
+
+    return summary
+
+
 def normalize_ai_analysis(ai_result, fallback_analysis, target_role_id="fullstack-web-developer", domain="technology"):
     if not ai_result:
         return {**fallback_analysis, "aiSource": "local_rules"}
@@ -595,6 +623,7 @@ def normalize_ai_analysis(ai_result, fallback_analysis, target_role_id="fullstac
     recommended_job_display = format_career_name(recommended_job)
     recommendation_source = ai_result.get("recommendation_source")
     score = clamp_score(ai_result.get("career_match_score"), fallback_analysis.get("readinessScore", 0))
+    match_score = clamp_score(ai_result.get("skill_match_score"), score)
     gap_score = clamp_score(ai_result.get("gap_score"), 100 - score)
     detected_skills = [humanize_skill(skill) for skill in ai_result.get("detected_skills_from_cv", [])]
     skill_gap = [humanize_skill(skill) for skill in ai_result.get("skill_gap", [])]
@@ -612,7 +641,7 @@ def normalize_ai_analysis(ai_result, fallback_analysis, target_role_id="fullstac
     owned_skills = {str(skill).lower() for skill in skill_dimiliki}
     extracted_lookup = {str(skill).lower() for skill in detected_skills}
 
-    job_matches = normalize_ai_job_matches(ai_result, fallback_analysis, role_id, score, skill_gap, recommendation_source)
+    job_matches = normalize_ai_job_matches(ai_result, fallback_analysis, role_id, match_score, skill_gap, recommendation_source)
     if not job_matches:
         for match in fallback_analysis.get("jobMatches", []):
             match_role_id = match.get("id")
@@ -626,9 +655,10 @@ def normalize_ai_analysis(ai_result, fallback_analysis, target_role_id="fullstac
                 job_matches.append({
                     **match,
                     "name": recommended_job_display or match.get("name"),
-                    "matchScore": score,
-                    "matchedSkills": matched_skills,
+                    "matchScore": match_score,
+                    "matchedSkills": matched_recommendation_skills or matched_skills,
                     "missingSkills": skill_gap,
+                    "requiredSkills": (matched_recommendation_skills + skill_gap) or required_skills,
                     "recommendationSource": recommendation_source,
                 })
             else:
@@ -644,13 +674,23 @@ def normalize_ai_analysis(ai_result, fallback_analysis, target_role_id="fullstac
             "id": role_id,
             "name": recommended_job_display,
             "domain": domain,
-            "matchScore": score,
+            "matchScore": match_score,
             "matchedSkills": matched_recommendation_skills,
             "missingSkills": skill_gap,
             "requiredSkills": matched_recommendation_skills + skill_gap,
             "recommendationSource": recommendation_source,
         })
 
+    def is_recommended_match(match):
+        return bool(
+            recommended_job_display
+            and (
+                match.get("id") == role_id
+                or str(match.get("name") or "").strip().lower() == recommended_job_display.lower()
+            )
+        )
+
+    job_matches = [match for match in job_matches if has_actionable_match(match) or is_recommended_match(match)]
     job_matches.sort(
         key=lambda item: (
             item.get("matchScore", 0),
@@ -658,7 +698,17 @@ def normalize_ai_analysis(ai_result, fallback_analysis, target_role_id="fullstac
         ),
         reverse=True,
     )
-    job_matches = [match for match in job_matches if has_actionable_match(match)]
+    if recommended_job_display:
+        recommended_matches = [
+            match for match in job_matches
+            if is_recommended_match(match)
+        ]
+        if recommended_matches:
+            top_recommended_match = recommended_matches[0]
+            job_matches = [
+                top_recommended_match,
+                *[match for match in job_matches if match is not top_recommended_match],
+            ]
 
     learning_path = ai_result.get("learning_path", [])
     course_recommendations = normalize_learning_path(learning_path, skill_gap, role_profile)
@@ -679,9 +729,13 @@ def normalize_ai_analysis(ai_result, fallback_analysis, target_role_id="fullstac
         **role_profile,
         "name": recommended_job_display or role_profile["name"],
     }
-    career_recommendation = create_career_recommendation(display_role_profile, score)
-    if ai_result.get("summary"):
-        career_recommendation["summary"] = ai_result["summary"]
+    skill_match_summary = build_skill_match_summary(
+        recommended_job_display or role_profile["name"],
+        match_score,
+        skill_gap,
+    )
+    career_recommendation = create_career_recommendation(display_role_profile, match_score)
+    career_recommendation["summary"] = skill_match_summary
 
     return {
         **fallback_analysis,
@@ -711,7 +765,7 @@ def normalize_ai_analysis(ai_result, fallback_analysis, target_role_id="fullstac
         "skill_dimiliki": skill_dimiliki,
         "learningPath": learning_path,
         "learning_path": learning_path,
-        "summary": ai_result.get("summary"),
+        "summary": skill_match_summary,
         "marketSignals": role_profile.get("marketSignals"),
         "businessGoal": role_profile.get("businessGoal"),
         "aiSource": "external",
@@ -724,7 +778,7 @@ def enrich_cv_analysis_with_ai(input_text, fallback_analysis, options=None):
         options = {}
 
     target_role = options.get("targetRole", "fullstack-web-developer")
-    target_job = options.get("targetJob") if "targetJob" in options else target_role
+    target_job = options.get("targetJob", "")
     domain = options.get("domain", "technology")
     ai_result = call_ai_predict(
         cv_text=input_text,
