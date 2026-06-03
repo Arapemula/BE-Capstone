@@ -2,6 +2,7 @@ import json
 import os
 import re
 import socket
+import time
 import urllib.error
 import urllib.request
 from urllib.parse import urlparse
@@ -63,6 +64,10 @@ SKILL_DISPLAY_NAMES = {
     "ui": "UI",
     "ux": "UX",
 }
+
+
+class AIServiceUnavailable(Exception):
+    pass
 
 
 def get_ai_service_url():
@@ -148,14 +153,15 @@ def format_career_name(career):
 
 def clamp_score(value, fallback=0):
     try:
-        score = round(float(value))
+        score = round(float(value), 2)
     except (TypeError, ValueError):
         try:
-            score = round(float(fallback))
+            score = round(float(fallback), 2)
         except (TypeError, ValueError):
             score = 0
 
-    return max(0, min(100, score))
+    score = max(0, min(100, score))
+    return int(score) if float(score).is_integer() else score
 
 
 def guess_platform_from_url(url):
@@ -284,7 +290,7 @@ def quiz_output_looks_template(questions, roles):
 def call_ai_predict(cv_text="", target_role="", quiz_score=80):
     ai_service_url = get_ai_service_url()
     if not ai_service_url:
-        return None
+        raise AIServiceUnavailable("Layanan analisis sedang belum siap. Coba beberapa saat lagi.")
 
     payload = {
         "cv_text": cv_text or " ",
@@ -292,22 +298,29 @@ def call_ai_predict(cv_text="", target_role="", quiz_score=80):
         "quiz_score": clamp_score(quiz_score, 80),
     }
     body = json.dumps(payload).encode("utf-8")
-    request = urllib.request.Request(
-        f"{ai_service_url}/predict",
-        data=body,
-        headers={
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        },
-        method="POST",
-    )
 
-    try:
-        with urllib.request.urlopen(request, timeout=get_ai_timeout_seconds()) as response:
-            return json.loads(response.read().decode("utf-8"))
-    except (urllib.error.URLError, TimeoutError, socket.timeout, json.JSONDecodeError) as exc:
-        print("AI service request failed:", exc)
-        return None
+    last_error = None
+    for attempt in range(1, 4):
+        request = urllib.request.Request(
+            f"{ai_service_url}/predict",
+            data=body,
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+            method="POST",
+        )
+
+        try:
+            with urllib.request.urlopen(request, timeout=get_ai_timeout_seconds()) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except (urllib.error.URLError, TimeoutError, socket.timeout, json.JSONDecodeError) as exc:
+            last_error = exc
+            print(f"AI service request failed on attempt {attempt}/3:", exc)
+            if attempt < 3:
+                time.sleep(0.5 * attempt)
+
+    raise AIServiceUnavailable("Layanan analisis sedang padat. Coba beberapa saat lagi.") from last_error
 
 
 def extract_json_object(raw_text=""):
@@ -334,7 +347,7 @@ def extract_json_object(raw_text=""):
 def call_openrouter_quiz(payload, fallback_quiz):
     api_key = get_openrouter_api_key()
     if not api_key:
-        return None
+        raise AIServiceUnavailable("Layanan kuis sedang belum siap. Coba beberapa saat lagi.")
 
     role_context = build_quiz_role_context(fallback_quiz)
     if not role_context:
@@ -399,21 +412,30 @@ def call_openrouter_quiz(payload, fallback_quiz):
     if app_name:
         headers["X-Title"] = app_name
 
-    request = urllib.request.Request(
-        "https://openrouter.ai/api/v1/chat/completions",
-        data=body,
-        headers=headers,
-        method="POST",
-    )
+    last_error = None
+    for attempt in range(1, 4):
+        request = urllib.request.Request(
+            "https://openrouter.ai/api/v1/chat/completions",
+            data=body,
+            headers=headers,
+            method="POST",
+        )
 
-    try:
-        with urllib.request.urlopen(request, timeout=get_ai_timeout_seconds()) as response:
-            result = json.loads(response.read().decode("utf-8"))
-            content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-            return extract_json_object(content)
-    except (urllib.error.URLError, TimeoutError, socket.timeout, json.JSONDecodeError) as exc:
-        print("OpenRouter quiz request failed:", exc)
-        return None
+        try:
+            with urllib.request.urlopen(request, timeout=get_ai_timeout_seconds()) as response:
+                result = json.loads(response.read().decode("utf-8"))
+                content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+                parsed = extract_json_object(content)
+                if parsed is None:
+                    raise ValueError("OpenRouter quiz returned invalid JSON.")
+                return parsed
+        except (urllib.error.URLError, TimeoutError, socket.timeout, json.JSONDecodeError, ValueError) as exc:
+            last_error = exc
+            print(f"OpenRouter quiz request failed on attempt {attempt}/3:", exc)
+            if attempt < 3:
+                time.sleep(0.5 * attempt)
+
+    raise AIServiceUnavailable("Layanan kuis sedang padat. Coba beberapa saat lagi.") from last_error
 
 
 def enrich_career_fit_quiz_with_openrouter(payload, fallback_quiz):
@@ -638,31 +660,22 @@ def normalize_ai_analysis(ai_result, fallback_analysis, target_role_id="fullstac
         "businessGoal": None,
         "marketSignals": [],
     }
-    owned_skills = {str(skill).lower() for skill in skill_dimiliki}
-    extracted_lookup = {str(skill).lower() for skill in detected_skills}
 
-    job_matches = normalize_ai_job_matches(ai_result, fallback_analysis, role_id, match_score, skill_gap, recommendation_source)
+    job_matches = normalize_ai_job_matches(ai_result, fallback_analysis, role_id, score, skill_gap, recommendation_source)
     if not job_matches:
-        for match in fallback_analysis.get("jobMatches", []):
-            match_role_id = match.get("id")
-            required_skills = match.get("requiredSkills", [])
-            matched_skills = [
-                skill for skill in required_skills
-                if skill.lower() in owned_skills or skill.lower() in extracted_lookup
-            ]
-
-            if match_role_id == role_id:
-                job_matches.append({
-                    **match,
-                    "name": recommended_job_display or match.get("name"),
-                    "matchScore": match_score,
-                    "matchedSkills": matched_recommendation_skills or matched_skills,
-                    "missingSkills": skill_gap,
-                    "requiredSkills": (matched_recommendation_skills + skill_gap) or required_skills,
-                    "recommendationSource": recommendation_source,
-                })
-            else:
-                job_matches.append(match)
+        job_matches.append({
+            "id": role_id,
+            "name": recommended_job_display or role_profile["name"],
+            "domain": domain,
+            "matchScore": score,
+            "careerMatchScore": score,
+            "skillMatchScore": match_score,
+            "gapScore": gap_score,
+            "matchedSkills": matched_recommendation_skills,
+            "missingSkills": skill_gap,
+            "requiredSkills": matched_recommendation_skills + skill_gap,
+            "recommendationSource": recommendation_source,
+        })
 
     has_recommended_match = any(
         match.get("id") == role_id
@@ -674,7 +687,10 @@ def normalize_ai_analysis(ai_result, fallback_analysis, target_role_id="fullstac
             "id": role_id,
             "name": recommended_job_display,
             "domain": domain,
-            "matchScore": match_score,
+            "matchScore": score,
+            "careerMatchScore": score,
+            "skillMatchScore": match_score,
+            "gapScore": gap_score,
             "matchedSkills": matched_recommendation_skills,
             "missingSkills": skill_gap,
             "requiredSkills": matched_recommendation_skills + skill_gap,
@@ -731,11 +747,13 @@ def normalize_ai_analysis(ai_result, fallback_analysis, target_role_id="fullstac
     }
     skill_match_summary = build_skill_match_summary(
         recommended_job_display or role_profile["name"],
-        match_score,
+        score,
         skill_gap,
     )
-    career_recommendation = create_career_recommendation(display_role_profile, match_score)
-    career_recommendation["summary"] = skill_match_summary
+    ai_summary = str(ai_result.get("summary") or "").strip()
+    career_summary = ai_summary or skill_match_summary
+    career_recommendation = create_career_recommendation(display_role_profile, score)
+    career_recommendation["summary"] = career_summary
 
     return {
         **fallback_analysis,
@@ -765,7 +783,7 @@ def normalize_ai_analysis(ai_result, fallback_analysis, target_role_id="fullstac
         "skill_dimiliki": skill_dimiliki,
         "learningPath": learning_path,
         "learning_path": learning_path,
-        "summary": skill_match_summary,
+        "summary": career_summary,
         "marketSignals": role_profile.get("marketSignals"),
         "businessGoal": role_profile.get("businessGoal"),
         "aiSource": "external",
@@ -960,7 +978,7 @@ def build_final_conclusion_fallback(payload):
 def call_openrouter_final_conclusion(payload, fallback_result):
     api_key = get_openrouter_api_key()
     if not api_key:
-        return None
+        raise AIServiceUnavailable("Layanan hasil akhir sedang belum siap. Coba beberapa saat lagi.")
 
     job_matches = payload.get("jobMatches", []) if isinstance(payload.get("jobMatches"), list) else []
     role_context = [
@@ -1032,21 +1050,30 @@ def call_openrouter_final_conclusion(payload, fallback_result):
     if app_name:
         headers["X-Title"] = app_name
 
-    request = urllib.request.Request(
-        "https://openrouter.ai/api/v1/chat/completions",
-        data=body,
-        headers=headers,
-        method="POST",
-    )
+    last_error = None
+    for attempt in range(1, 4):
+        request = urllib.request.Request(
+            "https://openrouter.ai/api/v1/chat/completions",
+            data=body,
+            headers=headers,
+            method="POST",
+        )
 
-    try:
-        with urllib.request.urlopen(request, timeout=get_ai_timeout_seconds()) as response:
-            result = json.loads(response.read().decode("utf-8"))
-            content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-            return extract_json_object(content)
-    except (urllib.error.URLError, TimeoutError, socket.timeout, json.JSONDecodeError) as exc:
-        print("OpenRouter final conclusion request failed:", exc)
-        return None
+        try:
+            with urllib.request.urlopen(request, timeout=get_ai_timeout_seconds()) as response:
+                result = json.loads(response.read().decode("utf-8"))
+                content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+                parsed = extract_json_object(content)
+                if parsed is None:
+                    raise ValueError("OpenRouter final conclusion returned invalid JSON.")
+                return parsed
+        except (urllib.error.URLError, TimeoutError, socket.timeout, json.JSONDecodeError, ValueError) as exc:
+            last_error = exc
+            print(f"OpenRouter final conclusion request failed on attempt {attempt}/3:", exc)
+            if attempt < 3:
+                time.sleep(0.5 * attempt)
+
+    raise AIServiceUnavailable("Layanan hasil akhir sedang padat. Coba beberapa saat lagi.") from last_error
 
 
 def normalize_final_conclusion(ai_result, fallback_result, payload):

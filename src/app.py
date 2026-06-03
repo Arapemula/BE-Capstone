@@ -17,10 +17,10 @@ from src.services.analysis import (
     generate_career_fit_quiz,
     get_dashboard_snapshot,
     get_quiz_questions,
-    get_role_profiles,
     score_quiz
 )
 from src.services.ai_client import (
+    AIServiceUnavailable,
     create_final_career_conclusion,
     enrich_career_fit_quiz_with_openrouter,
     enrich_cv_analysis_with_ai,
@@ -43,14 +43,46 @@ app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024
 port = int(os.getenv("PORT", 3001))
 
-def get_cors_origin():
-    raw = os.getenv("CORS_ORIGIN", "http://localhost:5173")
-    if raw.strip() == "*":
+DEFAULT_CORS_ORIGINS = (
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "https://capstone-odwh.vercel.app",
+)
+
+
+def normalize_origin(origin):
+    if not origin:
+        return ""
+    if origin.strip() == "*":
         return "*"
-    return [origin.strip() for origin in raw.split(",") if origin.strip()]
+    return origin.strip().rstrip("/")
+
+
+def parse_cors_origins(raw):
+    return [origin for origin in (normalize_origin(item) for item in raw.split(",")) if origin]
+
+
+def get_cors_origin():
+    cors_origin = os.getenv("CORS_ORIGIN", "")
+    configured_origins = parse_cors_origins(cors_origin)
+    if "*" in configured_origins:
+        return "*"
+
+    origins = list(DEFAULT_CORS_ORIGINS)
+    frontend_url = normalize_origin(os.getenv("FRONTEND_URL", ""))
+    if frontend_url:
+        origins.append(frontend_url)
+    origins.extend(configured_origins)
+    return list(dict.fromkeys(origins))
 
 cors_origins = get_cors_origin()
-CORS(app, origins=cors_origins)
+CORS(
+    app,
+    resources={r"/*": {"origins": cors_origins}},
+    methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"],
+    max_age=86400
+)
 
 # Initialize database
 init_database()
@@ -60,6 +92,45 @@ def is_pdf_upload(file):
     mimetype = (file.mimetype or "").lower()
     return filename.endswith(".pdf") or mimetype == "application/pdf"
 
+def clamp_quiz_score(value, fallback=0):
+    try:
+        score = round(float(value))
+    except (TypeError, ValueError):
+        score = fallback
+    return max(0, min(100, score))
+
+def is_career_fit_quiz_payload(payload):
+    answers = payload.get("answers")
+    return (
+        payload.get("track") == "career-fit"
+        or bool(payload.get("selectedRoleId"))
+        or bool(payload.get("selectedRoleName"))
+        or (isinstance(answers, list) and any(isinstance(answer, dict) for answer in answers))
+    )
+
+def build_career_fit_quiz_result(payload, domain, target_role):
+    answers = payload.get("answers") if isinstance(payload.get("answers"), list) else []
+    job_matches = payload.get("jobMatches") if isinstance(payload.get("jobMatches"), list) else []
+    score = clamp_quiz_score(payload.get("score"))
+
+    result = {
+        "score": score,
+        "track": payload.get("track") or "career-fit",
+        "domain": domain,
+        "targetRole": payload.get("targetRole") or target_role,
+        "targetRoleName": payload.get("targetRoleName") or payload.get("selectedRoleName"),
+        "selectedRoleId": payload.get("selectedRoleId"),
+        "selectedRoleName": payload.get("selectedRoleName"),
+        "selectedResponse": payload.get("selectedResponse"),
+        "answeredCount": len(answers),
+        "answers": answers,
+        "recommendation": payload.get("recommendation"),
+        "recommendedCareer": payload.get("recommendedCareer"),
+        "jobMatches": job_matches[:5],
+    }
+
+    return score, {key: value for key, value in result.items() if value is not None}
+
 @app.route('/health', methods=['GET'])
 def health():
     return jsonify({
@@ -68,10 +139,6 @@ def health():
         "stack": "flask",
         "database": "postgresql" if is_database_enabled() else "memory"
     })
-
-@app.route('/api/roles', methods=['GET'])
-def roles():
-    return jsonify({"roles": get_role_profiles()})
 
 @app.route('/api/profile', methods=['GET'])
 def profile():
@@ -141,6 +208,9 @@ def cv_upload():
             "aiReadableText": extracted_text,
             **analysis
         }), 201
+    except AIServiceUnavailable as e:
+        print("AI service unavailable:", e)
+        return jsonify({"error": str(e)}), 503
     except ValueError as e:
         traceback.print_exc()
         return jsonify({"error": str(e)}), 400
@@ -166,6 +236,9 @@ def career_fit_quiz():
         fallback_quiz = generate_career_fit_quiz(payload)
         quiz = enrich_career_fit_quiz_with_openrouter(payload, fallback_quiz)
         return jsonify({"question": quiz}), 201
+    except AIServiceUnavailable as e:
+        print("AI service unavailable:", e)
+        return jsonify({"error": str(e)}), 503
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
@@ -177,14 +250,18 @@ def quiz_submit():
         payload = request.json or {}
         domain = payload.get("domain") or request.args.get("domain") or "technology"
         target_role = payload.get("targetRole") or request.args.get("targetRole") or "fullstack-web-developer"
-        
-        result = score_quiz(payload.get("answers", []), {
-            "domain": domain,
-            "targetRole": target_role
-        })
 
-        save_quiz_result(score=result["score"], result=result, user_context=get_current_user_context())
-        return jsonify(result), 201
+        if is_career_fit_quiz_payload(payload):
+            score, result = build_career_fit_quiz_result(payload, domain, target_role)
+        else:
+            result = score_quiz(payload.get("answers", []), {
+                "domain": domain,
+                "targetRole": target_role
+            })
+            score = result["score"]
+
+        saved_attempt = save_quiz_result(score=score, result=result, user_context=get_current_user_context())
+        return jsonify({**result, "saved": True, "attemptId": saved_attempt.get("id")}), 201
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
@@ -196,6 +273,9 @@ def quiz_final_result():
         payload = request.json or {}
         result = create_final_career_conclusion(payload)
         return jsonify(result), 201
+    except AIServiceUnavailable as e:
+        print("AI service unavailable:", e)
+        return jsonify({"error": str(e)}), 503
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
@@ -207,6 +287,9 @@ def recommendations():
         fallback_recommendation = create_personalized_recommendation(payload)
         recommendation = enrich_recommendation_with_ai(payload, fallback_recommendation)
         return jsonify(recommendation), 201
+    except AIServiceUnavailable as e:
+        print("AI service unavailable:", e)
+        return jsonify({"error": str(e)}), 503
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500

@@ -30,7 +30,7 @@ Set Supabase values in `server.env`. If `DATABASE_URL` is empty, the API still r
 For local frontend integration, keep:
 
 ```env
-CORS_ORIGIN=http://localhost:5173
+CORS_ORIGIN=http://localhost:5173,http://127.0.0.1:5173
 ```
 
 Run the API:
@@ -90,7 +90,7 @@ gunicorn src.app:app --bind 0.0.0.0:$PORT
 Environment variables:
 
 ```env
-CORS_ORIGIN=https://your-frontend-domain.com
+CORS_ORIGIN=https://capstone-odwh.vercel.app
 DATABASE_URL=postgresql://user:password@host:port/db
 AUTO_CREATE_TABLES=true
 DATABASE_SSL=true
@@ -110,12 +110,13 @@ Set the frontend deployment variable to the Railway backend URL:
 VITE_API_URL=https://your-backend-domain.up.railway.app
 ```
 
+For Vercel backend deployments, set the same `CORS_ORIGIN` value in the backend project's Environment Variables and redeploy. Do not include a trailing slash in the URL.
+
 ## Main Endpoints
 
 - `GET /health`
 - `GET /api/profile`
 - `GET /api/profile/cv-analyses`
-- `GET /api/roles`
 - `POST /api/cvs`
 - `GET /api/quiz-questions`
 - `POST /api/career-fit-quizzes`

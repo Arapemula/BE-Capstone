@@ -386,9 +386,6 @@ def readiness_label(score):
         return "nearly ready"
     return "foundation"
 
-def get_role_profiles():
-    return ROLE_PROFILES
-
 def extract_pdf_text(file_obj):
     if PdfReader is None:
         raise ValueError("PDF parser belum terpasang. Jalankan `pip install pypdf` atau install requirements backend.")
