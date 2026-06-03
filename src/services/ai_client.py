@@ -931,6 +931,7 @@ def build_final_conclusion_fallback(payload):
     role_id = choose_fallback_final_role(payload or {})
     job_matches = payload.get("jobMatches", []) if isinstance(payload, dict) else []
     quiz = payload.get("quiz", {}) if isinstance(payload.get("quiz"), dict) else {}
+    quiz_skipped = bool(quiz.get("skipped"))
     extracted_skills = compact_text_list(payload.get("skillDimiliki"), 8) or compact_text_list(payload.get("extractedSkills"), 8)
     skill_gap = compact_text_list(payload.get("skillGap"), 8)
     top_match = next(
@@ -949,8 +950,13 @@ def build_final_conclusion_fallback(payload):
         "recommendedRoleName": recommended_name,
         "confidenceScore": match_score,
         "summary": (
-            f"Kesimpulan akhir mengarah ke {recommended_name} karena sinyal CV, job match, "
-            "dan jawaban mini quiz paling konsisten ke jalur ini."
+            f"Kesimpulan akhir mengarah ke {recommended_name} karena sinyal CV dan job match "
+            "sudah mengarah ke satu rekomendasi utama."
+            if quiz_skipped
+            else (
+                f"Kesimpulan akhir mengarah ke {recommended_name} karena sinyal CV, job match, "
+                "dan jawaban mini quiz paling konsisten ke jalur ini."
+            )
         ),
         "cvSummary": (
             f"Skill yang paling terlihat dari CV: {', '.join(extracted_skills[:5])}."
@@ -958,19 +964,33 @@ def build_final_conclusion_fallback(payload):
             else "CV belum menunjukkan skill spesifik yang kuat, jadi rekomendasi memakai job match dan mini quiz."
         ),
         "jobMatchSummary": (
-            f"Role ini memiliki kecocokan sekitar {match_score}% dari hasil scan dan dibandingkan dengan saran job lain."
+            f"Role ini memiliki kecocokan sekitar {match_score}% sebagai rekomendasi utama dari hasil scan."
+            if quiz_skipped
+            else f"Role ini memiliki kecocokan sekitar {match_score}% dari hasil scan dan dibandingkan dengan saran job lain."
         ),
         "quizSummary": (
-            f"Mini quiz memberi {votes} dari 5 sinyal ke role ini."
-            if votes
-            else "Mini quiz dipakai sebagai validasi minat terhadap saran job dari hasil scan."
+            "Mini quiz dilewati karena hasil scan hanya menghasilkan satu rekomendasi pekerjaan utama."
+            if quiz_skipped
+            else (
+                f"Mini quiz memberi {votes} dari 5 sinyal ke role ini."
+                if votes
+                else "Mini quiz dipakai sebagai validasi minat terhadap saran job dari hasil scan."
+            )
         ),
         "nextFocus": skill_gap[:3] or role_profile.get("requiredSkills", [])[:3],
-        "reasoning": [
-            "Sinyal skill CV dibandingkan dengan kebutuhan role.",
-            "Persentase job match dipakai sebagai baseline kesiapan.",
-            "Jawaban mini quiz dipakai untuk memilih arah yang paling diminati."
-        ],
+        "reasoning": (
+            [
+                "Sinyal skill CV dibandingkan dengan kebutuhan role.",
+                "Persentase job match dipakai sebagai baseline kesiapan.",
+                "Mini quiz dilewati karena tidak ada role pembanding."
+            ]
+            if quiz_skipped
+            else [
+                "Sinyal skill CV dibandingkan dengan kebutuhan role.",
+                "Persentase job match dipakai sebagai baseline kesiapan.",
+                "Jawaban mini quiz dipakai untuk memilih arah yang paling diminati."
+            ]
+        ),
         "source": "local_rules",
     }
 
@@ -995,6 +1015,7 @@ def call_openrouter_final_conclusion(payload, fallback_result):
         if isinstance(match, dict)
     ]
     quiz = payload.get("quiz", {}) if isinstance(payload.get("quiz"), dict) else {}
+    quiz_skipped = bool(quiz.get("skipped"))
     prompt_payload = {
         "allowedRoleIds": get_known_role_ids(job_matches),
         "cvTextExcerpt": str(payload.get("cvText") or "")[:2200],
@@ -1004,6 +1025,7 @@ def call_openrouter_final_conclusion(payload, fallback_result):
         "skillGap": compact_text_list(payload.get("skillGap"), 12),
         "jobMatches": role_context,
         "miniQuiz": {
+            "skipped": quiz_skipped,
             "score": quiz.get("score"),
             "selectedRoleId": quiz.get("selectedRoleId"),
             "answers": quiz.get("answers", [])[:5] if isinstance(quiz.get("answers"), list) else [],
@@ -1015,7 +1037,8 @@ def call_openrouter_final_conclusion(payload, fallback_result):
             "role": "system",
             "content": (
                 "Kamu adalah analis karier SkillMap. Berikan kesimpulan akhir pekerjaan paling cocok "
-                "berdasarkan ringkasan CV, daftar job match dari scan CV, dan jawaban mini quiz. "
+                "berdasarkan ringkasan CV, daftar job match dari scan CV, dan jawaban mini quiz jika tersedia. "
+                "Jika miniQuiz.skipped bernilai true, jangan klaim ada jawaban atau validasi mini quiz. "
                 "Jawab hanya JSON valid. recommendedRoleId wajib dari allowedRoleIds."
             ),
         },
@@ -1080,6 +1103,8 @@ def normalize_final_conclusion(ai_result, fallback_result, payload):
     if not ai_result:
         return fallback_result
 
+    quiz = payload.get("quiz", {}) if isinstance(payload.get("quiz"), dict) else {}
+    quiz_skipped = bool(quiz.get("skipped"))
     allowed_role_ids = set(get_known_role_ids(payload.get("jobMatches", [])))
     role_id = ai_result.get("recommendedRoleId")
     if role_id not in allowed_role_ids:
@@ -1107,7 +1132,11 @@ def normalize_final_conclusion(ai_result, fallback_result, payload):
         "summary": ai_result.get("summary") or fallback_result.get("summary"),
         "cvSummary": ai_result.get("cvSummary") or fallback_result.get("cvSummary"),
         "jobMatchSummary": ai_result.get("jobMatchSummary") or fallback_result.get("jobMatchSummary"),
-        "quizSummary": ai_result.get("quizSummary") or fallback_result.get("quizSummary"),
+        "quizSummary": (
+            fallback_result.get("quizSummary")
+            if quiz_skipped
+            else (ai_result.get("quizSummary") or fallback_result.get("quizSummary"))
+        ),
         "nextFocus": compact_text_list(next_focus, 5),
         "reasoning": compact_text_list(reasoning, 5),
         "source": "openrouter",
