@@ -191,6 +191,7 @@ def normalize_job_skill_key(value=""):
 def load_external_job_skill_map():
     candidate_paths = [
         os.getenv("JOB_SKILL_MAP_PATH", "").strip(),
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data", "job_skill_map.json")),
         os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "skillmap-ai", "artifacts", "job_skill_map.json")),
     ]
 
