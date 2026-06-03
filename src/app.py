@@ -27,6 +27,7 @@ from src.services.ai_client import (
     enrich_recommendation_with_ai,
     is_ai_service_enabled
 )
+from src.services.job_search import fetch_job_vacancies
 from src.repositories.store import (
     get_user_cv_history,
     get_user_profile,
@@ -293,6 +294,30 @@ def recommendations():
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/job-vacancies', methods=['GET'])
+@app.route('/api/jobs/vacancies', methods=['GET'])
+def job_vacancies():
+    role = request.args.get("role") or request.args.get("targetRole") or ""
+    location = request.args.get("location", "")
+    limit = request.args.get("limit", 6)
+
+    if not role.strip():
+        return jsonify({"error": "Role rekomendasi wajib dikirim untuk mencari info loker."}), 400
+
+    try:
+        return jsonify(fetch_job_vacancies(role=role, location=location, limit=limit))
+    except RuntimeError as e:
+        return jsonify({
+            "error": str(e),
+            "provider": "jobicy",
+            "jobs": []
+        }), 502
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e), "jobs": []}), 500
+
 
 @app.route('/api/dashboard-snapshots/overview', methods=['GET'])
 @app.route('/api/dashboard/overview', methods=['GET'])
