@@ -101,7 +101,7 @@ SUPABASE_ANON_KEY=your-supabase-anon-key
 AI_SERVICE_URL=https://api-skillmap-ai.up.railway.app
 AI_TIMEOUT_SECONDS=20
 OPENROUTER_API_KEY=optional-key-for-ai-generated-career-fit-quiz
-OPENROUTER_MODEL=deepseek/deepseek-v4-flash:free
+OPENROUTER_MODEL=deepseek/deepseek-v4-flash
 ```
 
 Set the frontend deployment variable to the Railway backend URL:

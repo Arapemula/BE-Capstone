@@ -90,7 +90,7 @@ def get_openrouter_api_key():
 
 
 def get_openrouter_model():
-    return os.getenv("OPENROUTER_MODEL", "deepseek/deepseek-v4-flash:free").strip() or "deepseek/deepseek-v4-flash:free"
+    return os.getenv("OPENROUTER_MODEL", "deepseek/deepseek-v4-flash").strip() or "deepseek/deepseek-v4-flash"
 
 
 def get_openrouter_site_url():
