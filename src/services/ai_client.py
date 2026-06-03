@@ -542,7 +542,7 @@ def slugify_job_id(value):
 
 
 def get_ai_job_matches(ai_result):
-    for key in ("jobMatches", "job_matches", "matches", "careerMatches", "career_matches"):
+    for key in ("jobMatches", "job_matches", "matches", "careerMatches", "career_matches", "careerRecommendations", "career_recommendations"):
         value = ai_result.get(key)
         if isinstance(value, list):
             return value
@@ -760,6 +760,8 @@ def normalize_ai_analysis(ai_result, fallback_analysis, target_role_id="fullstac
         "extractedSkills": detected_skills or fallback_analysis.get("extractedSkills", []),
         "skillDimiliki": skill_dimiliki,
         "jobMatches": job_matches,
+        "careerRecommendations": job_matches,
+        "career_recommendations": ai_result.get("career_recommendations", []),
         "suggestedRoleId": role_id,
         "skillGap": skill_gap,
         "recommendation": build_recommendation_texts(roadmap, display_role_profile),
