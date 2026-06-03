@@ -184,6 +184,47 @@ def compact_text_list(value, limit=6):
     ][:limit]
 
 
+def normalize_job_skill_key(value=""):
+    return re.sub(r"\s+", " ", str(value or "").strip().replace("_", " ").replace("-", " ")).lower()
+
+
+def load_external_job_skill_map():
+    candidate_paths = [
+        os.getenv("JOB_SKILL_MAP_PATH", "").strip(),
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "skillmap-ai", "artifacts", "job_skill_map.json")),
+    ]
+
+    for path in candidate_paths:
+        if not path:
+            continue
+
+        try:
+            with open(path, "r", encoding="utf-8") as file:
+                data = json.load(file)
+                if isinstance(data, dict):
+                    return {
+                        normalize_job_skill_key(key): compact_text_list(value, 20)
+                        for key, value in data.items()
+                        if isinstance(value, list)
+                    }
+        except Exception:
+            continue
+
+    return {}
+
+
+EXTERNAL_JOB_SKILL_MAP = load_external_job_skill_map()
+
+
+def get_required_skills_for_career(*values):
+    for value in values:
+        lookup_key = normalize_job_skill_key(value)
+        if lookup_key in EXTERNAL_JOB_SKILL_MAP:
+            return [humanize_skill(skill) for skill in EXTERNAL_JOB_SKILL_MAP[lookup_key]]
+
+    return []
+
+
 def build_quiz_role_context(fallback_quiz):
     roles = fallback_quiz.get("roles", []) if isinstance(fallback_quiz.get("roles"), list) else []
     role_by_id = {
@@ -575,7 +616,12 @@ def normalize_ai_job_matches(ai_result, fallback_analysis, role_id, score, skill
             continue
         seen_ids.add(normalized_id)
 
-        required_skills = compact_text_list(match.get("requiredSkills") or match.get("required_skills"), 20)
+        required_skills = [
+            humanize_skill(skill)
+            for skill in compact_text_list(match.get("requiredSkills") or match.get("required_skills"), 20)
+        ]
+        if not required_skills:
+            required_skills = get_required_skills_for_career(name, match_role_id, normalized_id)
         matched_skills = compact_text_list(match.get("matchedSkills") or match.get("matched_skills"), 20)
         missing_skills = compact_text_list(match.get("missingSkills") or match.get("missing_skills") or match.get("skill_gap"), 20)
         match_score = clamp_score(
