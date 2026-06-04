@@ -389,8 +389,7 @@ def extract_json_object(raw_text=""):
 def call_openrouter_quiz(payload, fallback_quiz):
     api_key = get_openrouter_api_key()
     if not api_key:
-        print("OpenRouter API key not configured, using fallback quiz.")
-        return None
+        raise AIServiceUnavailable("Layanan kuis sedang belum siap. Coba beberapa saat lagi.")
 
     role_context = build_quiz_role_context(fallback_quiz)
     if not role_context:
