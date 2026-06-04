@@ -438,8 +438,7 @@ def call_openrouter_quiz(payload, fallback_quiz):
         "model": get_openrouter_model(),
         "messages": messages,
         "temperature": 0.2,
-        "max_tokens": 1800,
-        "response_format": {"type": "json_object"},
+        "max_tokens": 3000,
     }).encode("utf-8")
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -467,7 +466,10 @@ def call_openrouter_quiz(payload, fallback_quiz):
             with urllib.request.urlopen(request, timeout=get_ai_timeout_seconds()) as response:
                 result = json.loads(response.read().decode("utf-8"))
                 content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-                parsed = extract_json_object(content)
+                # Strip markdown code fences if model wraps JSON in ```json ... ```
+                clean_content = re.sub(r"^```(?:json)?\s*", "", str(content or "").strip(), flags=re.IGNORECASE)
+                clean_content = re.sub(r"\s*```$", "", clean_content.strip())
+                parsed = extract_json_object(clean_content)
                 if parsed is None:
                     raise ValueError("OpenRouter quiz returned invalid JSON.")
                 return parsed
