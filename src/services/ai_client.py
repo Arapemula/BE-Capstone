@@ -386,11 +386,76 @@ def extract_json_object(raw_text=""):
     return None
 
 
-def call_openrouter_quiz(payload, fallback_quiz):
-    api_key = get_openrouter_api_key()
-    if not api_key:
-        raise AIServiceUnavailable("Layanan kuis sedang belum siap. Coba beberapa saat lagi.")
+def call_openrouter_base(messages, temperature=0.2, max_tokens=3000, response_format=None):
+    raw_keys = get_openrouter_api_key()
+    api_keys = [k.strip() for k in raw_keys.split(",") if k.strip()]
+    if not api_keys:
+        raise AIServiceUnavailable("Layanan sedang belum siap. Coba beberapa saat lagi.")
 
+    raw_models = get_openrouter_model()
+    models = [m.strip() for m in raw_models.split(",") if m.strip()]
+    if not models:
+        models = ["deepseek/deepseek-v4-flash"]
+
+    payload = {
+        "models": models,  # OpenRouter native fallback list
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+    if response_format:
+        payload["response_format"] = response_format
+
+    body = json.dumps(payload).encode("utf-8")
+    
+    last_error = None
+    for api_key in api_keys:
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        site_url = get_openrouter_site_url()
+        if site_url:
+            headers["HTTP-Referer"] = site_url
+        app_name = get_openrouter_app_name()
+        if app_name:
+            headers["X-Title"] = app_name
+
+        for attempt in range(1, 3):
+            request = urllib.request.Request(
+                "https://openrouter.ai/api/v1/chat/completions",
+                data=body,
+                headers=headers,
+                method="POST",
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=get_ai_timeout_seconds()) as response:
+                    result = json.loads(response.read().decode("utf-8"))
+                    content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+                    return content
+            except urllib.error.HTTPError as exc:
+                last_error = exc
+                error_body = ""
+                try:
+                    error_body = exc.read().decode("utf-8")
+                except Exception:
+                    pass
+                print(f"OpenRouter HTTP Error on key {api_key[:15]}...: {exc.code} {exc.reason} - Body: {error_body}")
+                if exc.code in (402, 429):
+                    break  # Try next API key
+                if attempt < 2:
+                    time.sleep(0.5 * attempt)
+            except (urllib.error.URLError, TimeoutError, socket.timeout, json.JSONDecodeError, ValueError) as exc:
+                last_error = exc
+                print(f"OpenRouter request failed on key {api_key[:15]}... attempt {attempt}/2:", exc)
+                if attempt < 2:
+                    time.sleep(0.5 * attempt)
+
+    raise AIServiceUnavailable("Layanan AI sedang padat. Coba beberapa saat lagi.") from last_error
+
+
+def call_openrouter_quiz(payload, fallback_quiz):
     role_context = build_quiz_role_context(fallback_quiz)
     if not role_context:
         return None
@@ -434,52 +499,19 @@ def call_openrouter_quiz(payload, fallback_quiz):
             ),
         },
     ]
-    body = json.dumps({
-        "model": get_openrouter_model(),
-        "messages": messages,
-        "temperature": 0.2,
-        "max_tokens": 3000,
-    }).encode("utf-8")
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-    }
-    site_url = get_openrouter_site_url()
-    if site_url:
-        headers["HTTP-Referer"] = site_url
 
-    app_name = get_openrouter_app_name()
-    if app_name:
-        headers["X-Title"] = app_name
-
-    last_error = None
-    for attempt in range(1, 4):
-        request = urllib.request.Request(
-            "https://openrouter.ai/api/v1/chat/completions",
-            data=body,
-            headers=headers,
-            method="POST",
-        )
-
-        try:
-            with urllib.request.urlopen(request, timeout=get_ai_timeout_seconds()) as response:
-                result = json.loads(response.read().decode("utf-8"))
-                content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-                # Strip markdown code fences if model wraps JSON in ```json ... ```
-                clean_content = re.sub(r"^```(?:json)?\s*", "", str(content or "").strip(), flags=re.IGNORECASE)
-                clean_content = re.sub(r"\s*```$", "", clean_content.strip())
-                parsed = extract_json_object(clean_content)
-                if parsed is None:
-                    raise ValueError("OpenRouter quiz returned invalid JSON.")
-                return parsed
-        except (urllib.error.URLError, TimeoutError, socket.timeout, json.JSONDecodeError, ValueError) as exc:
-            last_error = exc
-            print(f"OpenRouter quiz request failed on attempt {attempt}/3:", exc)
-            if attempt < 3:
-                time.sleep(0.5 * attempt)
-
-    raise AIServiceUnavailable("Layanan kuis sedang padat. Coba beberapa saat lagi.") from last_error
+    try:
+        content = call_openrouter_base(messages, temperature=0.2, max_tokens=3000)
+        clean_content = re.sub(r"^```(?:json)?\s*", "", str(content or "").strip(), flags=re.IGNORECASE)
+        clean_content = re.sub(r"\s*```$", "", clean_content.strip())
+        parsed = extract_json_object(clean_content)
+        if parsed is None:
+            raise ValueError("OpenRouter quiz returned invalid JSON.")
+        return parsed
+    except AIServiceUnavailable:
+        raise
+    except Exception as exc:
+        raise AIServiceUnavailable("Layanan kuis sedang padat. Coba beberapa saat lagi.") from exc
 
 
 def enrich_career_fit_quiz_with_openrouter(payload, fallback_quiz):
@@ -1047,10 +1079,6 @@ def build_final_conclusion_fallback(payload):
 
 
 def call_openrouter_final_conclusion(payload, fallback_result):
-    api_key = get_openrouter_api_key()
-    if not api_key:
-        raise AIServiceUnavailable("Layanan hasil akhir sedang belum siap. Coba beberapa saat lagi.")
-
     job_matches = payload.get("jobMatches", []) if isinstance(payload.get("jobMatches"), list) else []
     role_context = [
         {
@@ -1104,50 +1132,22 @@ def call_openrouter_final_conclusion(payload, fallback_result):
             ),
         },
     ]
-    body = json.dumps({
-        "model": get_openrouter_model(),
-        "messages": messages,
-        "temperature": 0.2,
-        "max_tokens": 1200,
-        "response_format": {"type": "json_object"},
-    }).encode("utf-8")
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-    }
-    site_url = get_openrouter_site_url()
-    if site_url:
-        headers["HTTP-Referer"] = site_url
 
-    app_name = get_openrouter_app_name()
-    if app_name:
-        headers["X-Title"] = app_name
-
-    last_error = None
-    for attempt in range(1, 4):
-        request = urllib.request.Request(
-            "https://openrouter.ai/api/v1/chat/completions",
-            data=body,
-            headers=headers,
-            method="POST",
+    try:
+        content = call_openrouter_base(
+            messages,
+            temperature=0.2,
+            max_tokens=1500,
+            response_format={"type": "json_object"}
         )
-
-        try:
-            with urllib.request.urlopen(request, timeout=get_ai_timeout_seconds()) as response:
-                result = json.loads(response.read().decode("utf-8"))
-                content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-                parsed = extract_json_object(content)
-                if parsed is None:
-                    raise ValueError("OpenRouter final conclusion returned invalid JSON.")
-                return parsed
-        except (urllib.error.URLError, TimeoutError, socket.timeout, json.JSONDecodeError, ValueError) as exc:
-            last_error = exc
-            print(f"OpenRouter final conclusion request failed on attempt {attempt}/3:", exc)
-            if attempt < 3:
-                time.sleep(0.5 * attempt)
-
-    raise AIServiceUnavailable("Layanan hasil akhir sedang padat. Coba beberapa saat lagi.") from last_error
+        parsed = extract_json_object(content)
+        if parsed is None:
+            raise ValueError("OpenRouter final conclusion returned invalid JSON.")
+        return parsed
+    except AIServiceUnavailable:
+        raise
+    except Exception as exc:
+        raise AIServiceUnavailable("Layanan hasil akhir sedang padat. Coba beberapa saat lagi.") from exc
 
 
 def normalize_final_conclusion(ai_result, fallback_result, payload):
