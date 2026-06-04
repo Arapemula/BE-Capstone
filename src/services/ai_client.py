@@ -1135,8 +1135,19 @@ def call_openrouter_final_conclusion(payload, fallback_result):
     ]
     quiz = payload.get("quiz", {}) if isinstance(payload.get("quiz"), dict) else {}
     quiz_skipped = bool(quiz.get("skipped"))
+    
+    allowed_role_ids = get_known_role_ids(job_matches)
+    selected_role_id = quiz.get("selectedRoleId")
+    if selected_role_id and selected_role_id not in allowed_role_ids:
+        allowed_role_ids.append(selected_role_id)
+    recommended_career = payload.get("recommendedCareer")
+    if recommended_career:
+        rec_id = slugify_job_id(recommended_career)
+        if rec_id not in allowed_role_ids:
+            allowed_role_ids.append(rec_id)
+
     prompt_payload = {
-        "allowedRoleIds": get_known_role_ids(job_matches),
+        "allowedRoleIds": allowed_role_ids,
         "cvTextExcerpt": str(payload.get("cvText") or "")[:2200],
         "profile": payload.get("profile", {}),
         "extractedSkills": compact_text_list(payload.get("extractedSkills"), 12),
@@ -1196,17 +1207,37 @@ def normalize_final_conclusion(ai_result, fallback_result, payload):
 
     quiz = payload.get("quiz", {}) if isinstance(payload.get("quiz"), dict) else {}
     quiz_skipped = bool(quiz.get("skipped"))
-    allowed_role_ids = set(get_known_role_ids(payload.get("jobMatches", [])))
+    
+    allowed_role_ids = get_known_role_ids(payload.get("jobMatches", []))
+    selected_role_id = quiz.get("selectedRoleId")
+    if selected_role_id and selected_role_id not in allowed_role_ids:
+        allowed_role_ids.append(selected_role_id)
+    recommended_career = payload.get("recommendedCareer")
+    if recommended_career:
+        rec_id = slugify_job_id(recommended_career)
+        if rec_id not in allowed_role_ids:
+            allowed_role_ids.append(rec_id)
+            
+    allowed_role_ids_set = set(allowed_role_ids)
     role_id = ai_result.get("recommendedRoleId")
-    if role_id not in allowed_role_ids:
+    if role_id not in allowed_role_ids_set:
         role_id = fallback_result["recommendedRoleId"]
+        recommended_name = fallback_result["recommendedRoleName"]
+        summary = fallback_result.get("summary")
+        cv_summary = fallback_result.get("cvSummary")
+        job_match_summary = fallback_result.get("jobMatchSummary")
+    else:
+        recommended_name = ai_result.get("recommendedRoleName") or fallback_result["recommendedRoleName"]
+        summary = ai_result.get("summary") or fallback_result.get("summary")
+        cv_summary = ai_result.get("cvSummary") or fallback_result.get("cvSummary")
+        job_match_summary = ai_result.get("jobMatchSummary") or fallback_result.get("jobMatchSummary")
 
     job_matches = payload.get("jobMatches", []) if isinstance(payload.get("jobMatches"), list) else []
     top_match = next(
         (match for match in job_matches if isinstance(match, dict) and (match.get("id") or match.get("roleId")) == role_id),
         {},
     )
-    role_profile = get_result_role_profile(role_id, top_match, ai_result.get("recommendedRoleName"))
+    role_profile = get_result_role_profile(role_id, top_match, recommended_name)
     next_focus = ai_result.get("nextFocus", fallback_result.get("nextFocus", []))
     if not isinstance(next_focus, list):
         next_focus = fallback_result.get("nextFocus", [])
@@ -1218,11 +1249,11 @@ def normalize_final_conclusion(ai_result, fallback_result, payload):
     return {
         **fallback_result,
         "recommendedRoleId": role_profile["id"],
-        "recommendedRoleName": ai_result.get("recommendedRoleName") or top_match.get("name") or role_profile["name"],
+        "recommendedRoleName": recommended_name,
         "confidenceScore": clamp_score(ai_result.get("confidenceScore"), fallback_result.get("confidenceScore", 0)),
-        "summary": ai_result.get("summary") or fallback_result.get("summary"),
-        "cvSummary": ai_result.get("cvSummary") or fallback_result.get("cvSummary"),
-        "jobMatchSummary": ai_result.get("jobMatchSummary") or fallback_result.get("jobMatchSummary"),
+        "summary": summary,
+        "cvSummary": cv_summary,
+        "jobMatchSummary": job_match_summary,
         "quizSummary": (
             fallback_result.get("quizSummary")
             if quiz_skipped
