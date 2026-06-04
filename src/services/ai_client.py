@@ -441,6 +441,19 @@ def call_openrouter_base(messages, temperature=0.2, max_tokens=3000, response_fo
                 try:
                     with urllib.request.urlopen(request, timeout=get_ai_timeout_seconds()) as response:
                         result = json.loads(response.read().decode("utf-8"))
+                        if isinstance(result, dict) and "error" in result:
+                            import io
+                            err_info = result["error"]
+                            err_msg = err_info.get("message") or "Unknown OpenRouter error"
+                            err_code = err_info.get("code") or 400
+                            fp = io.BytesIO(json.dumps(result).encode("utf-8"))
+                            raise urllib.error.HTTPError(
+                                request.full_url,
+                                int(err_code) if str(err_code).isdigit() else 400,
+                                err_msg,
+                                response.headers,
+                                fp
+                            )
                         content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
                         return content
                 except urllib.error.HTTPError as exc:

@@ -6,8 +6,9 @@ from flask_cors import CORS
 from dotenv import load_dotenv
 
 APP_DIR = Path(__file__).resolve().parents[1]
-load_dotenv(APP_DIR / "server.env")
-load_dotenv()
+load_dotenv(APP_DIR / "server.env", override=True)
+load_dotenv(override=True)
+
 
 from src.services.analysis import (
     analyze_cv_text,
