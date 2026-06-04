@@ -132,6 +132,11 @@ def build_career_fit_quiz_result(payload, domain, target_role):
 
     return score, {key: value for key, value in result.items() if value is not None}
 
+@app.route('/favicon.ico', methods=['GET'])
+@app.route('/favicon.png', methods=['GET'])
+def favicon():
+    return '', 204
+
 @app.route('/health', methods=['GET'])
 def health():
     return jsonify({
