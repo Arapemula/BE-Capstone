@@ -397,60 +397,100 @@ def call_openrouter_base(messages, temperature=0.2, max_tokens=3000, response_fo
     if not models:
         models = ["deepseek/deepseek-v4-flash"]
 
-    payload = {
-        "models": models[:3],  # OpenRouter native fallback list (max 3 items)
-        "messages": messages,
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-    }
-    if response_format:
-        payload["response_format"] = response_format
-
-    body = json.dumps(payload).encode("utf-8")
-    
     last_error = None
-    for api_key in api_keys:
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        }
-        site_url = get_openrouter_site_url()
-        if site_url:
-            headers["HTTP-Referer"] = site_url
-        app_name = get_openrouter_app_name()
-        if app_name:
-            headers["X-Title"] = app_name
+    for pass_idx in range(1, 3):  # 2 passes over keys
+        # Try different slices of models to bypass upstream model-specific rate limits
+        if pass_idx == 1:
+            current_models = models[:3]
+        else:
+            current_models = models[3:6] if len(models) >= 4 else models[:3]
+            if not current_models:
+                current_models = models[:3]
 
-        for attempt in range(1, 3):
-            request = urllib.request.Request(
-                "https://openrouter.ai/api/v1/chat/completions",
-                data=body,
-                headers=headers,
-                method="POST",
-            )
-            try:
-                with urllib.request.urlopen(request, timeout=get_ai_timeout_seconds()) as response:
-                    result = json.loads(response.read().decode("utf-8"))
-                    content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-                    return content
-            except urllib.error.HTTPError as exc:
-                last_error = exc
-                error_body = ""
+        payload = {
+            "models": current_models,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+        if response_format:
+            payload["response_format"] = response_format
+
+        body = json.dumps(payload).encode("utf-8")
+
+        for api_key in api_keys:
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            }
+            site_url = get_openrouter_site_url()
+            if site_url:
+                headers["HTTP-Referer"] = site_url
+            app_name = get_openrouter_app_name()
+            if app_name:
+                headers["X-Title"] = app_name
+
+            for attempt in range(1, 3):
+                request = urllib.request.Request(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    data=body,
+                    headers=headers,
+                    method="POST",
+                )
                 try:
-                    error_body = exc.read().decode("utf-8")
-                except Exception:
-                    pass
-                print(f"OpenRouter HTTP Error on key {api_key[:15]}...: {exc.code} {exc.reason} - Body: {error_body}")
-                if exc.code in (402, 429):
-                    break  # Try next API key
-                if attempt < 2:
-                    time.sleep(0.5 * attempt)
-            except (urllib.error.URLError, TimeoutError, socket.timeout, json.JSONDecodeError, ValueError) as exc:
-                last_error = exc
-                print(f"OpenRouter request failed on key {api_key[:15]}... attempt {attempt}/2:", exc)
-                if attempt < 2:
-                    time.sleep(0.5 * attempt)
+                    with urllib.request.urlopen(request, timeout=get_ai_timeout_seconds()) as response:
+                        result = json.loads(response.read().decode("utf-8"))
+                        content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+                        return content
+                except urllib.error.HTTPError as exc:
+                    last_error = exc
+                    error_body = ""
+                    try:
+                        error_body = exc.read().decode("utf-8")
+                    except Exception:
+                        pass
+                    print(f"OpenRouter HTTP Error on key {api_key[:15]}...: {exc.code} {exc.reason} - Body: {error_body}")
+                    
+                    if exc.code == 402:
+                        break  # Payment required: try next key
+                        
+                    if exc.code == 429:
+                        # 429 Too Many Requests: wait and retry same key first
+                        retry_after = 1.5
+                        try:
+                            h_val = exc.headers.get("Retry-After")
+                            if h_val:
+                                retry_after = float(h_val)
+                        except Exception:
+                            pass
+                        
+                        if retry_after == 1.5:
+                            try:
+                                err_data = json.loads(error_body)
+                                err_meta = err_data.get("error", {}).get("metadata", {})
+                                if isinstance(err_meta, dict):
+                                    retry_after_val = err_meta.get("retry_after_seconds") or err_meta.get("headers", {}).get("Retry-After")
+                                    if retry_after_val:
+                                        retry_after = float(retry_after_val)
+                            except Exception:
+                                pass
+                        
+                        retry_after = max(0.5, min(4.0, retry_after))
+                        print(f"OpenRouter 429: Rate limit hit. Sleeping for {retry_after:.2f}s before retry.")
+                        time.sleep(retry_after)
+                        if attempt < 2:
+                            continue
+                        else:
+                            break
+                            
+                    if attempt < 2:
+                        time.sleep(0.5 * attempt)
+                except (urllib.error.URLError, TimeoutError, socket.timeout, json.JSONDecodeError, ValueError) as exc:
+                    last_error = exc
+                    print(f"OpenRouter request failed on key {api_key[:15]}... attempt {attempt}/2:", exc)
+                    if attempt < 2:
+                        time.sleep(0.5 * attempt)
 
     raise AIServiceUnavailable("Layanan AI sedang padat. Coba beberapa saat lagi.") from last_error
 
