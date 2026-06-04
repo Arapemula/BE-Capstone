@@ -235,11 +235,12 @@ def career_fit_quiz():
     try:
         payload = request.json or {}
         fallback_quiz = generate_career_fit_quiz(payload)
-        quiz = enrich_career_fit_quiz_with_openrouter(payload, fallback_quiz)
+        try:
+            quiz = enrich_career_fit_quiz_with_openrouter(payload, fallback_quiz)
+        except AIServiceUnavailable as ai_err:
+            print("OpenRouter unavailable, using fallback quiz:", ai_err)
+            quiz = fallback_quiz
         return jsonify({"question": quiz}), 201
-    except AIServiceUnavailable as e:
-        print("AI service unavailable:", e)
-        return jsonify({"error": str(e)}), 503
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
