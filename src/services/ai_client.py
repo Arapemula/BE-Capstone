@@ -398,7 +398,7 @@ def call_openrouter_base(messages, temperature=0.2, max_tokens=3000, response_fo
         models = ["deepseek/deepseek-v4-flash"]
 
     payload = {
-        "models": models,  # OpenRouter native fallback list
+        "models": models[:3],  # OpenRouter native fallback list (max 3 items)
         "messages": messages,
         "temperature": temperature,
         "max_tokens": max_tokens,
