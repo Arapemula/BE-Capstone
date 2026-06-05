@@ -1182,7 +1182,6 @@ def call_openrouter_final_conclusion(payload, fallback_result):
             messages,
             temperature=0.2,
             max_tokens=1500,
-            response_format={"type": "json_object"}
         )
         parsed = extract_json_object(content)
         if parsed is None:
