@@ -36,6 +36,7 @@ from src.repositories.store import (
     save_cv_analysis,
     save_lead,
     save_quiz_result,
+    update_latest_cv_analysis,
     get_latest_activity
 )
 from src.db import init_database
@@ -279,6 +280,7 @@ def quiz_final_result():
     try:
         payload = request.json or {}
         result = create_final_career_conclusion(payload)
+        update_latest_cv_analysis(result, get_current_user_context())
         return jsonify(result), 201
     except AIServiceUnavailable as e:
         print("AI service unavailable:", e)

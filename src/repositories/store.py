@@ -1,5 +1,6 @@
 from datetime import datetime
 from sqlalchemy import text
+from sqlalchemy.orm.attributes import flag_modified
 from src.db import ENGINE, session_scope, get_or_create_authenticated_user, get_or_create_skill, Cv, UserSkill, LearningPath, QuizAttempt
 
 memory_store = {
@@ -62,6 +63,49 @@ def save_cv_analysis(file_name, file_size=0, analysis=None, user_context=None):
     except Exception as e:
         print("Database error in save_cv_analysis:", e)
         return record
+
+
+def update_latest_cv_analysis(final_result, user_context=None):
+    """Merge final career conclusion ke record CV terbaru milik user."""
+    if not final_result:
+        return
+
+    # Field-field yang dipakai halaman riwayat di frontend
+    merged = {"finalResult": final_result}
+    if final_result.get("recommendedRoleName"):
+        merged["recommendedCareer"] = final_result["recommendedRoleName"]
+    if final_result.get("summary"):
+        merged["summary"] = final_result["summary"]
+    if final_result.get("confidenceScore") is not None:
+        merged["careerMatchScore"] = final_result["confidenceScore"]
+    if isinstance(final_result.get("nextFocus"), list) and final_result["nextFocus"]:
+        merged["roadmap"] = final_result["nextFocus"]
+
+    # Update in-memory store
+    owner_id = get_owner_key(user_context)
+    user_cvs = [item for item in memory_store["cvAnalyses"] if item.get("ownerId") == owner_id]
+    if user_cvs:
+        latest = user_cvs[-1]
+        latest["analysis"] = {**(latest.get("analysis") or {}), **merged}
+
+    if not is_database_enabled():
+        return
+
+    try:
+        with session_scope() as session:
+            user = get_or_create_authenticated_user(session, user_context)
+            latest_cv = (
+                session.query(Cv)
+                .filter_by(user_id=user.id)
+                .order_by(Cv.created_at.desc())
+                .first()
+            )
+            if latest_cv:
+                existing = latest_cv.analysis or {}
+                latest_cv.analysis = {**existing, **merged}
+                flag_modified(latest_cv, "analysis")
+    except Exception as e:
+        print("Database error in update_latest_cv_analysis:", e)
 
 def save_quiz_result(score, result, user_context=None):
     record = {
