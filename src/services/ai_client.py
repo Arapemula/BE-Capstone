@@ -397,15 +397,13 @@ def call_openrouter_base(messages, temperature=0.2, max_tokens=3000, response_fo
     if not models:
         models = ["deepseek/deepseek-v4-flash"]
 
+    # Build model slices: setiap pass coba 3 model berbeda dari list
+    model_slices = [models[i:i + 3] for i in range(0, len(models), 3) if models[i:i + 3]]
+    if not model_slices:
+        model_slices = [models[:3]]
+
     last_error = None
-    for pass_idx in range(1, 3):  # 2 passes over keys
-        # Try different slices of models to bypass upstream model-specific rate limits
-        if pass_idx == 1:
-            current_models = models[:3]
-        else:
-            current_models = models[3:6] if len(models) >= 4 else models[:3]
-            if not current_models:
-                current_models = models[:3]
+    for pass_idx, current_models in enumerate(model_slices[:2], start=1):
 
         payload = {
             "models": current_models,
@@ -417,8 +415,9 @@ def call_openrouter_base(messages, temperature=0.2, max_tokens=3000, response_fo
             payload["response_format"] = response_format
 
         body = json.dumps(payload).encode("utf-8")
+        print(f"OpenRouter pass {pass_idx}: models={current_models} keys={len(api_keys)}")
 
-        for api_key in api_keys:
+        for key_idx, api_key in enumerate(api_keys, start=1):
             headers = {
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
@@ -455,6 +454,7 @@ def call_openrouter_base(messages, temperature=0.2, max_tokens=3000, response_fo
                                 fp
                             )
                         content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+                        print(f"OpenRouter OK: pass={pass_idx} key={key_idx}/{len(api_keys)} attempt={attempt}")
                         return content
                 except urllib.error.HTTPError as exc:
                     last_error = exc
@@ -463,47 +463,27 @@ def call_openrouter_base(messages, temperature=0.2, max_tokens=3000, response_fo
                         error_body = exc.read().decode("utf-8")
                     except Exception:
                         pass
-                    print(f"OpenRouter HTTP Error on key {api_key[:15]}...: {exc.code} {exc.reason} - Body: {error_body}")
+                    print(f"OpenRouter HTTP {exc.code} pass={pass_idx} key={key_idx}/{len(api_keys)} attempt={attempt}: {exc.reason} | {error_body[:300]}")
                     
-                    if exc.code == 402:
-                        break  # Payment required: try next key
-                        
+                    if exc.code in (401, 402):
+                        # Auth/billing issue: skip key ini
+                        print(f"OpenRouter {exc.code}: skipping key {key_idx}")
+                        break
+
                     if exc.code == 429:
-                        # 429 Too Many Requests: wait and retry same key first
-                        retry_after = 1.5
-                        try:
-                            h_val = exc.headers.get("Retry-After")
-                            if h_val:
-                                retry_after = float(h_val)
-                        except Exception:
-                            pass
-                        
-                        if retry_after == 1.5:
-                            try:
-                                err_data = json.loads(error_body)
-                                err_meta = err_data.get("error", {}).get("metadata", {})
-                                if isinstance(err_meta, dict):
-                                    retry_after_val = err_meta.get("retry_after_seconds") or err_meta.get("headers", {}).get("Retry-After")
-                                    if retry_after_val:
-                                        retry_after = float(retry_after_val)
-                            except Exception:
-                                pass
-                        
-                        retry_after = max(0.5, min(4.0, retry_after))
-                        print(f"OpenRouter 429: Rate limit hit. Sleeping for {retry_after:.2f}s before retry.")
-                        time.sleep(retry_after)
-                        if attempt < 2:
-                            continue
-                        else:
-                            break
-                            
+                        # Rate limit free tier tidak reset dalam hitungan detik
+                        # Langsung pindah ke key berikutnya
+                        print(f"OpenRouter 429 key {key_idx}: rate limit, switch to next key")
+                        break
+
+                    # Error lain (400, 5xx): retry sekali lagi
                     if attempt < 2:
-                        time.sleep(0.5 * attempt)
+                        time.sleep(0.5)
                 except (urllib.error.URLError, TimeoutError, socket.timeout, json.JSONDecodeError, ValueError) as exc:
                     last_error = exc
-                    print(f"OpenRouter request failed on key {api_key[:15]}... attempt {attempt}/2:", exc)
+                    print(f"OpenRouter network error pass={pass_idx} key={key_idx}/{len(api_keys)} attempt={attempt}: {exc}")
                     if attempt < 2:
-                        time.sleep(0.5 * attempt)
+                        time.sleep(0.5)
 
     raise AIServiceUnavailable("Layanan AI sedang padat. Coba beberapa saat lagi.") from last_error
 
