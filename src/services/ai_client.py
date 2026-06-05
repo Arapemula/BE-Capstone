@@ -1183,14 +1183,18 @@ def call_openrouter_final_conclusion(payload, fallback_result):
             temperature=0.2,
             max_tokens=1500,
         )
-        parsed = extract_json_object(content)
+        clean_content = re.sub(r"^```(?:json)?\s*", "", str(content or "").strip(), flags=re.IGNORECASE)
+        clean_content = re.sub(r"\s*```$", "", clean_content.strip())
+        parsed = extract_json_object(clean_content)
         if parsed is None:
+            print(f"[career-results] Failed to parse JSON. Raw content preview: {str(content or '')[:500]}")
             raise ValueError("OpenRouter final conclusion returned invalid JSON.")
         return parsed
     except AIServiceUnavailable:
         raise
     except Exception as exc:
         raise AIServiceUnavailable("Layanan hasil akhir sedang padat. Coba beberapa saat lagi.") from exc
+
 
 
 def normalize_final_conclusion(ai_result, fallback_result, payload):
