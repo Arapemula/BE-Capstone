@@ -1,44 +1,47 @@
-# Backend Project Structure
+# Struktur Proyek Backend
 
-`BE-Capstone` is the authoritative Flask API workspace. Frontend work belongs in `../Capstone`.
+`BE-Capstone` adalah workspace Flask API SkillMap. Pekerjaan frontend ada di `../Capstone`.
 
-```txt
+```
 BE-Capstone/
-|-- src/
-|   |-- app.py              # Flask app and API routes
-|   |-- db.py               # Database connection and helpers
-|   |-- repositories/       # Persistence layer and in-memory fallback
-|   |-- services/           # Business logic and AI service integration
-|   `-- data/               # Quiz bank and skill taxonomies
-|-- database/
-|   `-- schema.sql          # PostgreSQL schema
-|-- docs/                   # Backend documentation
-|-- Procfile                # Railway start command
-|-- railway.json            # Railway configuration
-|-- runtime.txt             # Python runtime version
-|-- requirements.txt        # Python dependencies
-|-- server.env.example      # Environment variable template
-`-- README.md
+├── src/
+│   ├── app.py              # Flask app dan route API
+│   ├── db.py               # Koneksi database dan helper
+│   ├── auth.py             # Validasi token Supabase
+│   ├── repositories/       # Persistence layer dan in-memory fallback
+│   ├── services/           # Business logic dan integrasi AI service
+│   └── data/               # Quiz bank dan taxonomy skill
+├── database/
+│   └── schema.sql          # Skema PostgreSQL
+├── docs/                   # Dokumentasi backend
+├── Procfile                # Perintah start Railway
+├── railway.json            # Konfigurasi Railway
+├── runtime.txt             # Versi Python runtime
+├── requirements.txt        # Dependensi Python
+├── server.env.example      # Template environment variable
+└── README.md
 ```
 
-## Where To Work
+## Lokasi Pengerjaan
 
-- Add or update API endpoints in `src/app.py`.
-- Put reusable business logic in `src/services`.
-- Put database/store access in `src/repositories`.
-- Update local static app data in `src/data`.
-- Update persistent schema in `database/schema.sql`.
-- Add environment variables to `server.env.example` when they are required by the app.
+| Kebutuhan | Lokasi |
+|-----------|--------|
+| Tambah atau ubah endpoint API | `src/app.py` |
+| Business logic yang reusable | `src/services/` |
+| Akses database atau store | `src/repositories/` |
+| Data statis aplikasi | `src/data/` |
+| Skema database persisten | `database/schema.sql` |
+| Tambah environment variable baru | `server.env.example` |
 
-## Separate Frontend Contract
+## Kontrak dengan Frontend
 
-- The frontend reaches this service through `VITE_API_URL`.
-- This backend allows the frontend origin through `CORS_ORIGIN`.
-- Supabase auth tokens are sent from the frontend as `Authorization: Bearer <token>`.
-- Do not make frontend UI changes in this repository.
+- Frontend mengakses service ini melalui `VITE_API_URL`
+- Backend mengizinkan origin frontend melalui `CORS_ORIGIN`
+- Token Supabase dikirim dari frontend sebagai header `Authorization: Bearer <token>`
+- Perubahan UI frontend tidak dilakukan di repo ini
 
-## Placement Rules
+## Aturan Penempatan File
 
-- Keep Railway files at the repository root.
-- Keep secrets in `server.env` or provider-managed environment variables; do not commit real credentials.
-- Keep generated folders such as `.venv`, `__pycache__`, uploads, and logs out of git.
+- File konfigurasi Railway tetap di root repo
+- Secret disimpan di `server.env` atau environment variable provider — jangan commit kredensial asli
+- Folder `.venv`, `__pycache__`, upload lokal, dan log tidak dimasukkan ke git

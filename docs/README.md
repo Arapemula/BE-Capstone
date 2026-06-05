@@ -1,7 +1,11 @@
-# SkillMap Backend Documentation
+# Dokumentasi Backend SkillMap
 
-Dokumentasi pendukung untuk backend standalone SkillMap.
+Dokumentasi pendukung untuk backend SkillMap.
 
-- `PROJECT_STRUCTURE.md` - peta folder, lokasi file penting, dan aturan penempatan file.
+## Daftar Dokumen
 
-File runtime dan deploy tetap berada di root karena Railway dan tooling lokal membaca file tersebut dari lokasi itu.
+| File | Keterangan |
+|------|------------|
+| `PROJECT_STRUCTURE.md` | Peta folder, lokasi file penting, dan aturan penempatan file |
+
+File runtime dan konfigurasi deploy (Procfile, railway.json, runtime.txt) tetap berada di root repo karena Railway dan tooling lokal membacanya dari lokasi tersebut.
