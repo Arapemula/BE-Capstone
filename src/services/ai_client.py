@@ -76,9 +76,17 @@ def get_ai_service_url():
 
 def get_ai_timeout_seconds():
     try:
-        return float(os.getenv("AI_TIMEOUT_SECONDS", "20"))
+        return float(os.getenv("AI_TIMEOUT_SECONDS", "8"))
     except ValueError:
-        return 20.0
+        return 8.0
+
+
+def get_quiz_timeout_seconds():
+    """Timeout khusus untuk quiz generation — lebih ketat agar tidak timeout di Vercel."""
+    try:
+        return float(os.getenv("QUIZ_TIMEOUT_SECONDS", "8"))
+    except ValueError:
+        return 8.0
 
 
 def is_ai_service_enabled():
@@ -539,16 +547,21 @@ def call_openrouter_quiz(payload, fallback_quiz):
         clean_content = re.sub(r"\s*```$", "", clean_content.strip())
         parsed = extract_json_object(clean_content)
         if parsed is None:
-            raise ValueError("OpenRouter quiz returned invalid JSON.")
+            print("OpenRouter quiz: invalid JSON response, returning None for fallback.")
+            return None
         return parsed
-    except AIServiceUnavailable:
-        raise
     except Exception as exc:
-        raise AIServiceUnavailable("Layanan kuis sedang padat. Coba beberapa saat lagi.") from exc
+        # Jangan raise — biarkan fallback quiz yang dipakai
+        print(f"OpenRouter quiz failed (will use fallback): {exc}")
+        return None
 
 
 def enrich_career_fit_quiz_with_openrouter(payload, fallback_quiz):
-    ai_quiz = call_openrouter_quiz(payload or {}, fallback_quiz)
+    try:
+        ai_quiz = call_openrouter_quiz(payload or {}, fallback_quiz)
+    except Exception as exc:
+        print(f"enrich_career_fit_quiz_with_openrouter: OpenRouter error (fallback used): {exc}")
+        ai_quiz = None
     if not ai_quiz:
         return fallback_quiz
 
